@@ -1,29 +1,29 @@
 # poc-ai-demo — AI Cam POC Center
 
-基于 Vue 3 + TypeScript + Vite 实现的「COSMOS AI CAM POC CENTER」前端演示控制台。
+A frontend demo console for the "COSMOS AI CAM POC CENTER", built with Vue 3 + TypeScript + Vite.
 
-本页面参考 `ai-demo/index.html` 的 UI/交互与 `ai-demo/1_facial.py` 等检测脚本的业务场景，使用 TypeScript + Vue 重构，内置演示数据，可直接运行。
+This page mirrors the UI/interactions of `ai-demo/index.html` and the business scenarios of detection scripts such as `ai-demo/1_facial.py`, rebuilt with TypeScript + Vue. It ships with built-in demo data and runs out of the box.
 
-## 功能一览
+## Features
 
-三个主标签页：
+Three main tabs:
 
-| 标签页 | 功能 |
+| Tab | Function |
 |---|---|
-| **AI Cam Live** | 脚本/摄像机选择、视频预览（ROI + 人员框标注）、Preview 启停、实时监测结果、检测历史记录弹窗 |
-| **Control** | 分析脚本的 Run/Stop 控制、摄像机分配 |
-| **Configuration** | 摄像机设置、脚本设置、人脸管理、ROI 绘制 |
+| **AI Cam Live** | Script/camera selection, video preview (ROI + person bounding boxes), Preview start/stop, real-time detection results, detection history modal |
+| **Control** | Run/Stop control for analysis scripts, camera assignment |
+| **Configuration** | Camera settings, script settings, face management, ROI drawing |
 
-内置 4 个演示脚本：Safety Helmet Detection、People Counting、Face Recognition、Traffic Counting。
+Four built-in demo scripts: Safety Helmet Detection, People Counting, Face Recognition, Traffic Counting.
 
-## 技术栈
+## Tech Stack
 
-- Vue 3（`<script setup>` 组合式 API）
-- TypeScript（严格模式）
+- Vue 3 (`<script setup>` Composition API)
+- TypeScript (strict mode)
 - Vite 5
-- 状态管理：模块级 `reactive` store（`src/store.ts`）
+- State management: module-level `reactive` store (`src/store.ts`)
 
-## 目录结构
+## Project Structure
 
 ```
 poc-ai-demo/
@@ -35,16 +35,16 @@ poc-ai-demo/
     ├── main.ts
     ├── App.vue
     ├── style.css
-    ├── types.ts          # 领域类型定义
-    ├── data.ts           # 演示数据
-    ├── store.ts          # 响应式状态与动作
+    ├── types.ts          # Domain type definitions
+    ├── data.ts           # Demo data
+    ├── store.ts          # Reactive state and actions
     └── components/
         ├── TopBar.vue
         ├── TabNav.vue
         ├── DemoView.vue      # AI Cam Live
         ├── ControlView.vue   # Control
         ├── ConfigView.vue    # Configuration
-        └── modals/           # 各类弹窗
+        └── modals/           # Various modals
             ├── ResultDetailModal.vue
             ├── HistoryModal.vue
             ├── ControlModal.vue
@@ -55,24 +55,24 @@ poc-ai-demo/
             └── DeleteFaceModal.vue
 ```
 
-## 运行
+## Running
 
 ```bash
-# 安装依赖
+# Install dependencies
 npm install
 
-# 开发模式（默认 http://localhost:5173）
+# Development mode (default http://localhost:5173)
 npm run dev
 
-# 类型检查 + 生产构建
+# Type-check + production build
 npm run build
 
-# 预览生产构建
+# Preview the production build
 npm run preview
 ```
 
-## 说明
+## Notes
 
-- 本页面为**前端演示**，使用内置 mock 数据，不连接真实 RTSP/S3/Telemetry/MQTT 后端。
-- 视频预览区为 CSS 绘制的示意画面（渐变网格 + ROI 框 + 人员检测框），非真实视频流。
-- 人脸图片使用 `https://i.pravatar.cc` 占位头像。
+- This page is a **frontend demo** that uses built-in mock data and does not connect to real RTSP/S3/Telemetry/MQTT backends.
+- The video preview area is a CSS-rendered schematic (gradient grid + ROI box + person detection boxes), not a real video stream.
+- Face images use `https://i.pravatar.cc` placeholder avatars.
