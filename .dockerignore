@@ -1,0 +1,15 @@
+# 依赖与构建产物（镜像内重新 npm ci + build，避免陈旧产物与巨型上下文）
+node_modules/
+dist/
+dist-ssr/
+
+# 版本控制 / 编辑器 / 本地环境
+.git/
+.gitignore
+.vscode/
+*.local
+.DS_Store
+
+# Docker 自身
+Dockerfile
+.dockerignore
