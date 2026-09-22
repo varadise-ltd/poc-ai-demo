@@ -1,7 +1,6 @@
 // Backend API client for face management (SQLite-backed).
 
 import type { Alert, Camera, CameraAI, FaceData, FaceMeta, FaceValidation, GateConfig, PeopleCountReport, Script, ScriptParam, ScriptRun } from './types'
-
 const BASE_URL: string = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
 export async function listGateConfigs(cameraId?: string): Promise<GateConfig[]> {

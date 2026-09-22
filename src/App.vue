@@ -16,9 +16,9 @@ import { store } from './store'
     <TabNav />
     <main>
       <DemoView v-show="store.activeTab === 'demo'" />
-      <PeopleCountingView v-show="store.activeTab === 'people'" />
       <CameraView v-show="store.activeTab === 'camera'" />
       <ControlView v-show="store.activeTab === 'model'" />
+      <PeopleCountingView v-show="store.activeTab === 'people'" />
       <DashboardView v-show="store.activeTab === 'dashboard'" />
       <FaceView v-show="store.activeTab === 'face'" />
       <ControlView v-show="store.activeTab === 'control'" />

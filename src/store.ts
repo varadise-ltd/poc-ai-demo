@@ -10,7 +10,6 @@ import {
 import type { Alert, Camera, CameraAI, EventItem, FaceData, FaceMeta, FaceValidation, GateConfig, HistoryEvent, PeopleCountReport, Script, ScriptRun } from './types'
 
 export type TabId = 'demo' | 'people' | 'camera' | 'model' | 'dashboard' | 'face' | 'control' | 'config'
-
 export const store = reactive({
   // Navigation
   activeTab: 'demo' as TabId,
