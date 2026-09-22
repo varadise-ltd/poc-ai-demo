@@ -1,8 +1,39 @@
 // Backend API client for face management (SQLite-backed).
 
-import type { Alert, Camera, CameraAI, FaceData, FaceMeta, FaceValidation, Script, ScriptParam, ScriptRun } from './types'
-
+import type { Alert, Camera, FaceData, FaceMeta, CameraAI,FaceValidation, GateConfig, PeopleCountReport, Script, ScriptParam, ScriptRun } from './types'
 const BASE_URL: string = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
+
+export async function listGateConfigs(cameraId?: string): Promise<GateConfig[]> {
+  const query = cameraId ? `?camera_id=${encodeURIComponent(cameraId)}` : ''
+  const data = await handle<{ gates: GateConfig[] }>(await fetch(`${BASE_URL}/api/gates/config${query}`))
+  return data.gates
+}
+
+export async function getPeopleCountReport(filters: {
+  cameraId?: string
+  location?: string
+  start?: string
+  end?: string
+  granularity?: 'hour' | 'day'
+} = {}): Promise<PeopleCountReport> {
+  const query = new URLSearchParams()
+  if (filters.cameraId) query.set('camera_id', filters.cameraId)
+  if (filters.location) query.set('location', filters.location)
+  if (filters.start) query.set('start', filters.start)
+  if (filters.end) query.set('end', filters.end)
+  query.set('granularity', filters.granularity ?? 'hour')
+  return handle<PeopleCountReport>(await fetch(`${BASE_URL}/api/gates/report?${query}`))
+}
+
+export function peopleCountExportUrl(filters: { cameraId?: string; location?: string; start?: string; end?: string; granularity?: 'hour' | 'day' } = {}): string {
+  const query = new URLSearchParams()
+  if (filters.cameraId) query.set('camera_id', filters.cameraId)
+  if (filters.location) query.set('location', filters.location)
+  if (filters.start) query.set('start', filters.start)
+  if (filters.end) query.set('end', filters.end)
+  query.set('granularity', filters.granularity ?? 'day')
+  return `${BASE_URL}/api/gates/export?${query}`
+}
 
 interface FaceRecord {
   id: number

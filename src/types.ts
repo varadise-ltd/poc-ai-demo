@@ -92,6 +92,43 @@ export interface ScriptRun {
   pid?: number | null
 }
 
+export interface GateConfig {
+  id: number
+  camera_id: string
+  gate_id: string
+  location: string
+  line_start_x: number
+  line_start_y: number
+  line_end_x: number
+  line_end_y: number
+  enabled: number
+}
+
+export interface PeopleCountSummary {
+  camera_id: string
+  location: string
+  gate_id: string
+  in: number
+  out: number
+  occupancy: number
+}
+
+export interface PeopleCountPeriod {
+  period: string
+  in: number
+  out: number
+  total: number
+  occupancy: number
+}
+
+export interface PeopleCountReport {
+  summary: PeopleCountSummary[]
+  trend: PeopleCountPeriod[]
+  peaks: PeopleCountPeriod[]
+  rows: Record<string, unknown>[]
+  granularity: 'hour' | 'day'
+}
+
 export interface Alert {
   timestamp: string
   script: string

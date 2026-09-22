@@ -7,10 +7,8 @@ import {
   historyEvents as initialHistoryEvents,
   scripts as initialScripts,
 } from './data'
-import type { Alert, Camera, CameraAI, EventItem, FaceData, FaceMeta, FaceValidation, HistoryEvent, Script, ScriptRun } from './types'
-
-export type TabId = 'demo' | 'camera' | 'model' | 'dashboard' | 'face'
-
+import type { Alert, Camera, EventItem, FaceData, FaceMeta, FaceValidation, CameraAI,GateConfig, HistoryEvent, PeopleCountReport, Script, ScriptRun } from './types'
+export type TabId = 'demo' | 'people' | 'control' | 'config' | 'camera' | 'model' | 'dashboard' | 'face'
 export const store = reactive({
   // Navigation
   activeTab: 'demo' as TabId,
@@ -49,6 +47,12 @@ export const store = reactive({
   cameras: [] as Camera[],
   cameraLoading: false,
   cameraError: '',
+  gateConfigs: [] as GateConfig[],
+  peopleReport: null as PeopleCountReport | null,
+  peopleLoading: false,
+  peopleError: '',
+  peopleGranularity: 'hour' as 'hour' | 'day',
+  peopleLocation: '',
 
   // Face management
   deletingFaceId: null as number | null,
@@ -137,6 +141,23 @@ export function selectScript(id: string): void {
 
 export function selectCamera(name: string): void {
   store.selectedCamera = name
+}
+
+export async function loadPeopleCounting(): Promise<void> {
+  store.peopleLoading = true
+  store.peopleError = ''
+  try {
+    const [gates, report] = await Promise.all([
+      api.listGateConfigs(store.selectedCamera),
+      api.getPeopleCountReport({ cameraId: store.selectedCamera, location: store.peopleLocation || undefined, granularity: store.peopleGranularity }),
+    ])
+    store.gateConfigs = gates
+    store.peopleReport = report
+  } catch (err) {
+    store.peopleError = err instanceof Error ? err.message : String(err)
+  } finally {
+    store.peopleLoading = false
+  }
 }
 
 // 启停脚本（Control 页）：运行 = 用第一个已分配 camera 启动后端检测；停止 = 停止后端检测
