@@ -4,6 +4,7 @@ import TabNav from './components/TabNav.vue'
 import DemoView from './components/DemoView.vue'
 import ControlView from './components/ControlView.vue'
 import ConfigView from './components/ConfigView.vue'
+import PeopleCountingView from './components/PeopleCountingView.vue'
 import { store } from './store'
 </script>
 
@@ -13,6 +14,7 @@ import { store } from './store'
     <TabNav />
     <main>
       <DemoView v-show="store.activeTab === 'demo'" />
+      <PeopleCountingView v-show="store.activeTab === 'people'" />
       <ControlView v-show="store.activeTab === 'control'" />
       <ConfigView v-show="store.activeTab === 'config'" />
     </main>
