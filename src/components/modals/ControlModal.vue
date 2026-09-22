@@ -82,7 +82,7 @@ async function toggleRun(): Promise<void> {
             <h3>Execution</h3>
             <span class="subtitle">{{ running ? 'Currently running.' : hasCameras ? 'Currently stopped.' : 'Assign a camera before running.' }}</span>
           </div>
-          <span v-if="!hasCameras" class="pill gray" title="Assign a camera in the Configuration page before running">No camera</span>
+          <span v-if="!hasCameras" class="pill gray" title="Assign a camera in the AI model page before running">No camera</span>
           <button v-else class="btn" :class="running ? 'dark' : 'primary'" @click="toggleRun">
             {{ running ? 'Stop' : 'Run' }}
           </button>
