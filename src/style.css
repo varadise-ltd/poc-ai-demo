@@ -766,6 +766,16 @@ input[type='range'].param-range::-moz-range-thumb {
   display: flex;
 }
 
+/* 模态打开时锁定背景滚动，防止滚轮/触控板穿透到后面页面 */
+body:has(.detail-modal.show) {
+  overflow: hidden;
+}
+
+.detail-modal,
+.detail-dialog {
+  overscroll-behavior: contain;
+}
+
 .detail-dialog {
   width: min(520px, 100%);
   max-height: min(720px, calc(100vh - 40px));
@@ -991,6 +1001,141 @@ input[type='range'].param-range::-moz-range-thumb {
 .row-actions {
   display: flex;
   gap: 8px;
+}
+
+/* Camera expand + per-camera AI model list (index framework) */
+.camera-expand-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 6px;
+  width: 34px;
+  height: 34px;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 650;
+}
+
+.camera-expand-btn:hover {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.camera-script-sub {
+  margin: -4px 0 10px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 7px 7px;
+  background: #fafbfc;
+  padding: 6px 14px 10px;
+}
+
+.camera-script-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.camera-script-row:last-child {
+  border-bottom: 0;
+}
+
+.camera-script-row .script-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.camera-script-empty {
+  padding: 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.camera-ai-add {
+  padding: 8px 0 2px;
+}
+
+/* ⋯ menu on per-camera AI model rows (index framework) */
+.ai-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.ai-menu-btn {
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: 1px;
+}
+
+.ai-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(13, 37, 56, 0.16);
+  padding: 4px;
+  min-width: 160px;
+}
+
+.ai-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.ai-menu-item:hover {
+  background: #f4f6f8;
+}
+
+.ai-menu-item.danger {
+  color: var(--red);
+}
+
+.ai-menu-item.danger:hover {
+  background: rgba(217, 77, 77, 0.1);
+}
+
+/* Modal tabs (Common / ROI setting) */
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+
+.modal-tab {
+  border: 0;
+  background: transparent;
+  padding: 12px 14px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.modal-tab:hover {
+  color: var(--ink);
+}
+
+.modal-tab.active {
+  color: var(--orange);
+  border-bottom-color: var(--orange);
 }
 
 .roi-editor {

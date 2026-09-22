@@ -101,3 +101,14 @@ export interface Alert {
   camera?: string | null
   confidence?: string | null
 }
+
+// Per-camera AI model instance (index framework: cameraAI)
+export interface CameraAI {
+  iid: number
+  camera: string
+  scriptId: string
+  name: string
+  enabled: boolean
+  output?: string
+  params?: Record<string, number | boolean>
+}
