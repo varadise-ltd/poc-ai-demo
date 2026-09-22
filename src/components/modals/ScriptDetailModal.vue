@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import {
   addStreamCamera,
   cameraList,
+  createScriptRecord,
   defaultOutput,
   removeStreamCamera,
   setCameraOutput,
@@ -80,26 +81,17 @@ function saveScript(): void {
   if (isAddMode.value) {
     const name = store.newScriptName.trim()
     if (!name) return
-    const id = `script_${Date.now()}`
-    const newScript: Script = {
-      id,
+    createScriptRecord({
       name,
-      meta: 'New · Script · Parameters configured',
-      loaded: false,
-      cameras: [],
-      kpis: [
-        ['Detections', '0', 'Current'],
-        ['Events', '0', 'Current'],
-        ['Status', 'Stopped', '—'],
-        ['Confidence', '—', '—'],
-      ],
       description: store.newScriptDescription,
       organization: organization.value.trim(),
       scenario: scenario.value.trim(),
-    }
-    store.scripts.push(newScript)
-    store.scriptDetailMode = 'edit'
-    store.currentScriptDetailId = id
+    })
+      .then((script) => {
+        store.scriptDetailMode = 'edit'
+        store.currentScriptDetailId = script.id
+      })
+      .catch((err) => alert(err instanceof Error ? err.message : String(err)))
   } else if (script.value?.id) {
     updateScriptMetaRecord(script.value.id, {
       organization: organization.value.trim(),

@@ -1,6 +1,6 @@
 // Backend API client for face management (SQLite-backed).
 
-import type { Alert, Camera, FaceData, FaceMeta, FaceValidation, GateConfig, PeopleCountReport, Script, ScriptParam, ScriptRun } from './types'
+import type { Alert, Camera, CameraAI, FaceData, FaceMeta, FaceValidation, GateConfig, PeopleCountReport, Script, ScriptParam, ScriptRun } from './types'
 
 const BASE_URL: string = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
@@ -431,4 +431,85 @@ export function streamUrl(camera: string, scriptId: string, annotate: boolean): 
 export function snapshotUrl(camera: string, scriptId: string, annotate: boolean): string {
   const q = new URLSearchParams({ camera, script_id: scriptId, annotate: String(annotate) })
   return `${BASE_URL}/api/stream/snapshot?${q.toString()}`
+}
+
+// ---------------------------------------------------------------------------
+// AI model CRUD
+// ---------------------------------------------------------------------------
+
+export async function createScript(fields: {
+  name: string
+  meta?: string
+  description?: string
+  organization?: string
+  scenario?: string
+}): Promise<Script> {
+  const res = await fetch(`${BASE_URL}/api/scripts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  })
+  return toScript(await handle<ScriptRecord>(res))
+}
+
+export async function deleteScript(id: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/scripts/${id}`, { method: 'DELETE' })
+  await handle(res)
+}
+
+// ---------------------------------------------------------------------------
+// Per-camera AI model instances
+// ---------------------------------------------------------------------------
+
+interface CameraAIRecord {
+  iid: number
+  camera: string
+  script_id: string
+  name: string
+  enabled: boolean
+  output?: string
+  params?: Record<string, number | boolean>
+}
+
+function toCameraAI(r: CameraAIRecord): CameraAI {
+  return { iid: r.iid, camera: r.camera, scriptId: r.script_id, name: r.name, enabled: r.enabled, output: r.output, params: r.params }
+}
+
+export async function listCameraAI(): Promise<CameraAI[]> {
+  const res = await fetch(`${BASE_URL}/api/camera-ai`)
+  const data = await handle<CameraAIRecord[]>(res)
+  return data.map(toCameraAI)
+}
+
+export async function createCameraAI(fields: {
+  camera: string
+  scriptId: string
+  name?: string
+  enabled?: boolean
+  output?: string
+  params?: Record<string, number | boolean>
+}): Promise<CameraAI> {
+  const res = await fetch(`${BASE_URL}/api/camera-ai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ camera: fields.camera, script_id: fields.scriptId, name: fields.name, enabled: fields.enabled, output: fields.output, params: fields.params }),
+  })
+  return toCameraAI(await handle<CameraAIRecord>(res))
+}
+
+export async function updateCameraAI(
+  iid: number,
+  fields: { name?: string; enabled?: boolean; output?: string; params?: Record<string, number | boolean> },
+): Promise<CameraAI> {
+  const res = await fetch(`${BASE_URL}/api/camera-ai/${iid}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  })
+  return toCameraAI(await handle<CameraAIRecord>(res))
+}
+
+export async function deleteCameraAI(iid: number): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/camera-ai/${iid}`, { method: 'DELETE' })
+  await handle(res)
 }

@@ -7,9 +7,9 @@ import {
   historyEvents as initialHistoryEvents,
   scripts as initialScripts,
 } from './data'
-import type { Alert, Camera, EventItem, FaceData, FaceMeta, FaceValidation, GateConfig, HistoryEvent, PeopleCountReport, Script, ScriptRun } from './types'
+import type { Alert, Camera, CameraAI, EventItem, FaceData, FaceMeta, FaceValidation, GateConfig, HistoryEvent, PeopleCountReport, Script, ScriptRun } from './types'
 
-export type TabId = 'demo' | 'people' | 'control' | 'config'
+export type TabId = 'demo' | 'people' | 'camera' | 'model' | 'dashboard' | 'face' | 'control' | 'config'
 
 export const store = reactive({
   // Navigation
@@ -69,6 +69,8 @@ export const store = reactive({
   showFaceEditor: false,
   showFaceDetail: false,
   showDeleteFace: false,
+  showAiDetail: false,
+  showAddAi: false,
 
   // Modal working state
   controlSelectedId: null as string | null,
@@ -87,6 +89,14 @@ export const store = reactive({
   scriptDetailMode: 'edit' as 'add' | 'edit',
   newScriptName: '',
   newScriptDescription: '',
+
+  // AI model instance detail (per camera, includes ROI setting tab)
+  aiDetailCamera: null as string | null,
+  aiDetailScriptId: null as string | null,
+  aiDetailIid: null as number | null,
+
+  // Per-camera AI model instances (index framework: cameraAI)
+  cameraAI: [] as CameraAI[],
 })
 
 // ---------------------------------------------------------------------------
@@ -392,4 +402,68 @@ export async function removeFaceRecord(id: number): Promise<void> {
   await api.deleteFace(id)
   const idx = store.faceData.findIndex((f) => f.id === id)
   if (idx >= 0) store.faceData.splice(idx, 1)
+}
+
+// ---------------------------------------------------------------------------
+// AI model CRUD (backend-driven)
+// ---------------------------------------------------------------------------
+
+export async function createScriptRecord(fields: {
+  name: string
+  description?: string
+  organization?: string
+  scenario?: string
+}): Promise<Script> {
+  const script = await api.createScript(fields)
+  store.scripts.push(script)
+  return script
+}
+
+export async function removeScriptRecord(id: string): Promise<void> {
+  await api.deleteScript(id)
+  const idx = store.scripts.findIndex((s) => s.id === id)
+  if (idx >= 0) store.scripts.splice(idx, 1)
+  store.cameraAI = store.cameraAI.filter((a) => a.scriptId !== id)
+}
+
+// ---------------------------------------------------------------------------
+// Per-camera AI model instances (index framework: cameraAI)
+// ---------------------------------------------------------------------------
+
+export async function loadCameraAI(): Promise<void> {
+  try {
+    store.cameraAI = await api.listCameraAI()
+  } catch {
+    // 忽略加载错误，保留旧数据
+  }
+}
+
+export async function addCameraAIRecord(fields: {
+  camera: string
+  scriptId: string
+  name?: string
+  enabled?: boolean
+  output?: string
+  params?: Record<string, number | boolean>
+}): Promise<CameraAI> {
+  const inst = await api.createCameraAI(fields)
+  store.cameraAI.push(inst)
+  // 相机与脚本建立关联（若尚未关联）
+  const script = store.scripts.find((s) => s.id === inst.scriptId)
+  if (script && !script.cameras.includes(inst.camera)) script.cameras.push(inst.camera)
+  return inst
+}
+
+export async function updateCameraAIRecord(
+  iid: number,
+  fields: { name?: string; enabled?: boolean; output?: string; params?: Record<string, number | boolean> },
+): Promise<void> {
+  const inst = await api.updateCameraAI(iid, fields)
+  const idx = store.cameraAI.findIndex((a) => a.iid === iid)
+  if (idx >= 0) store.cameraAI.splice(idx, 1, inst)
+}
+
+export async function removeCameraAIRecord(iid: number): Promise<void> {
+  await api.deleteCameraAI(iid)
+  store.cameraAI = store.cameraAI.filter((a) => a.iid !== iid)
 }

@@ -169,18 +169,18 @@ onBeforeUnmount(() => {
         </select>
       </div>
       <div class="field">
-        <label>2 · Select Dectect Object</label>
-        <select v-model="store.selectedScriptId">
-          <option v-for="s in displayScripts" :key="s.id" :value="s.id">
-            {{ s.name }} · {{ store.scriptRuns[s.id]?.status ?? 'stopped' }}
+        <label>2 · Select camera</label>
+        <select v-model="store.selectedCamera">
+          <option v-for="c in displayCameras" :key="c.id" :value="c.name">
+            {{ c.name }} · {{ c.status }}
           </option>
         </select>
       </div>
       <div class="field">
-        <label>3 · Select camera</label>
-        <select v-model="store.selectedCamera">
-          <option v-for="c in displayCameras" :key="c.id" :value="c.name">
-            {{ c.name }} · {{ c.status }}
+        <label>3 · Select AI model</label>
+        <select v-model="store.selectedScriptId">
+          <option v-for="s in displayScripts" :key="s.id" :value="s.id">
+            {{ s.name }} · {{ store.scriptRuns[s.id]?.status ?? 'stopped' }}
           </option>
         </select>
       </div>
