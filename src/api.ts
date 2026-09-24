@@ -1,38 +1,31 @@
 // Backend API client for face management (SQLite-backed).
 
-import type { Alert, Camera, CameraAI, FaceData, FaceMeta, FaceValidation, GateConfig, PeopleCountReport, Script, ScriptParam, ScriptRun } from './types'
+import type { Alert, Camera, CameraAI, CameraModelRun, DashboardQueryResult, FaceData, FaceMeta, FaceValidation, Script, ScriptParam, ScriptRun } from './types'
 const BASE_URL: string = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
-export async function listGateConfigs(cameraId?: string): Promise<GateConfig[]> {
-  const query = cameraId ? `?camera_id=${encodeURIComponent(cameraId)}` : ''
-  const data = await handle<{ gates: GateConfig[] }>(await fetch(`${BASE_URL}/api/gates/config${query}`))
-  return data.gates
-}
-
-export async function getPeopleCountReport(filters: {
-  cameraId?: string
-  location?: string
-  start?: string
-  end?: string
-  granularity?: 'hour' | 'day'
-} = {}): Promise<PeopleCountReport> {
+// Dashboard analytics (see /api/dashboard on the backend). The dashboard *list* is
+// frontend-owned (DashboardView.vue) so the sidebar renders even when the API is down;
+// only the per-dashboard query is fetched here.
+export async function queryDashboard(
+  dashboardId: string,
+  filters: {
+    start?: string
+    end?: string
+    cameraId?: string
+    personName?: string
+    matchStatus?: 'all' | 'matched' | 'unknown'
+    violation?: string
+  } = {},
+): Promise<DashboardQueryResult> {
   const query = new URLSearchParams()
-  if (filters.cameraId) query.set('camera_id', filters.cameraId)
-  if (filters.location) query.set('location', filters.location)
   if (filters.start) query.set('start', filters.start)
   if (filters.end) query.set('end', filters.end)
-  query.set('granularity', filters.granularity ?? 'hour')
-  return handle<PeopleCountReport>(await fetch(`${BASE_URL}/api/gates/report?${query}`))
-}
-
-export function peopleCountExportUrl(filters: { cameraId?: string; location?: string; start?: string; end?: string; granularity?: 'hour' | 'day' } = {}): string {
-  const query = new URLSearchParams()
-  if (filters.cameraId) query.set('camera_id', filters.cameraId)
-  if (filters.location) query.set('location', filters.location)
-  if (filters.start) query.set('start', filters.start)
-  if (filters.end) query.set('end', filters.end)
-  query.set('granularity', filters.granularity ?? 'day')
-  return `${BASE_URL}/api/gates/export?${query}`
+  if (filters.cameraId && filters.cameraId !== 'all') query.set('camera_id', filters.cameraId)
+  if (filters.personName && filters.personName !== 'all') query.set('person_name', filters.personName)
+  if (filters.matchStatus) query.set('match_status', filters.matchStatus)
+  if (filters.violation && filters.violation !== 'all') query.set('violation', filters.violation)
+  const qs = query.toString()
+  return handle<DashboardQueryResult>(await fetch(`${BASE_URL}/api/dashboard/${encodeURIComponent(dashboardId)}/query${qs ? `?${qs}` : ''}`))
 }
 
 interface FaceRecord {
@@ -271,6 +264,9 @@ interface ScriptRecord {
   organization?: string | null
   scenario?: string | null
   params?: Record<string, ScriptParamRecord>
+  kpis?: string[][]
+  custom?: boolean
+  deleted?: boolean
   run?: { status: 'running' | 'stopped'; camera?: string | null; pid?: number | null }
 }
 
@@ -291,10 +287,12 @@ function toScript(r: ScriptRecord): Script {
     meta: r.meta,
     loaded: r.loaded,
     cameras: r.cameras,
-    kpis: [],
+    kpis: (r.kpis ?? []).map((kpi) => [kpi[0] ?? '', kpi[1] ?? '', kpi[2] ?? ''] as [string, string, string]),
     description: r.description ?? undefined,
     organization: r.organization ?? undefined,
     scenario: r.scenario ?? undefined,
+    custom: r.custom ?? false,
+    deleted: r.deleted ?? false,
     params,
   }
 }
@@ -303,11 +301,13 @@ export async function listScripts(
   status?: string,
   organization?: string,
   scenario?: string,
+  includeDeleted = false,
 ): Promise<{ scripts: Script[]; runs: Record<string, ScriptRun> }> {
   const q = new URLSearchParams()
   if (status) q.set('status', status)
   if (organization) q.set('organization', organization)
   if (scenario) q.set('scenario', scenario)
+  if (includeDeleted) q.set('include_deleted', 'true')
   const qs = q.toString()
   const res = await fetch(`${BASE_URL}/api/scripts${qs ? `?${qs}` : ''}`)
   const data = await handle<ScriptRecord[]>(res)
@@ -344,9 +344,59 @@ export async function runScript(id: string, camera?: string): Promise<ScriptRun>
   return handle<ScriptRun>(res)
 }
 
-export async function stopScript(id: string): Promise<ScriptRun> {
-  const res = await fetch(`${BASE_URL}/api/scripts/${id}/stop`, { method: 'POST' })
+export async function stopScript(id: string, camera?: string): Promise<ScriptRun> {
+  const query = camera ? `?camera=${encodeURIComponent(camera)}` : ''
+  const res = await fetch(`${BASE_URL}/api/scripts/${id}/stop${query}`, { method: 'POST' })
   return handle<ScriptRun>(res)
+}
+
+// ---------------------------------------------------------------------------
+// Per-camera run control (each camera of an AI model runs/stops on its own)
+// ---------------------------------------------------------------------------
+
+/** Per-camera run state, including whether the camera is online and startable. */
+export async function listScriptCameras(scriptId: string): Promise<CameraModelRun[]> {
+  const res = await fetch(`${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras`)
+  return handle<CameraModelRun[]>(res)
+}
+
+/**
+ * Assign a camera to an AI model.
+ *
+ * Writes the same relation row the Camera page creates through
+ * `createCameraAI`, so the two pages stay interchangeable.
+ */
+export async function assignScriptCamera(scriptId: string, camera: string): Promise<CameraModelRun> {
+  const res = await fetch(
+    `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}`,
+    { method: 'POST' },
+  )
+  return handle<CameraModelRun>(res)
+}
+
+/** Unassign a camera from an AI model (stops its worker and drops its ROI). */
+export async function unassignScriptCamera(scriptId: string, camera: string): Promise<void> {
+  const res = await fetch(
+    `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}`,
+    { method: 'DELETE' },
+  )
+  await handle(res)
+}
+
+export async function runScriptCamera(scriptId: string, camera: string): Promise<CameraModelRun> {
+  const res = await fetch(
+    `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/run`,
+    { method: 'POST' },
+  )
+  return handle<CameraModelRun>(res)
+}
+
+export async function stopScriptCamera(scriptId: string, camera: string): Promise<CameraModelRun> {
+  const res = await fetch(
+    `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/stop`,
+    { method: 'POST' },
+  )
+  return handle<CameraModelRun>(res)
 }
 
 export async function stopAllScripts(): Promise<void> {
@@ -436,9 +486,13 @@ export function snapshotUrl(camera: string, scriptId: string, annotate: boolean)
 // AI model CRUD
 // ---------------------------------------------------------------------------
 
+/**
+ * Create a custom AI model. The backend clones the detector wiring of
+ * `base_script_id` (a built-in scenario), so it is required.
+ */
 export async function createScript(fields: {
   name: string
-  meta?: string
+  base_script_id: string
   description?: string
   organization?: string
   scenario?: string
@@ -451,9 +505,22 @@ export async function createScript(fields: {
   return toScript(await handle<ScriptRecord>(res))
 }
 
+/** Soft-delete one AI model (restorable through `restoreScript`). */
 export async function deleteScript(id: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/scripts/${id}`, { method: 'DELETE' })
   await handle(res)
+}
+
+/** Bring a soft-deleted AI model back into the catalog. */
+export async function restoreScript(id: string): Promise<Script> {
+  const res = await fetch(`${BASE_URL}/api/scripts/${id}/restore`, { method: 'POST' })
+  return toScript(await handle<ScriptRecord>(res))
+}
+
+/** Soft-deleted AI models only (candidates for restore). */
+export async function listDeletedScripts(): Promise<Script[]> {
+  const { scripts } = await listScripts(undefined, undefined, undefined, true)
+  return scripts.filter((s) => s.deleted)
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,10 @@ export interface Script {
   scenario?: string
   videoSource?: string
   rtmpOutput?: string
+  /** Operator-created model (clones a built-in scenario's detector wiring). */
+  custom?: boolean
+  /** Soft-deleted model: hidden from the catalog, shown only in the restore list. */
+  deleted?: boolean
 }
 
 export interface EventItem {
@@ -92,41 +96,24 @@ export interface ScriptRun {
   pid?: number | null
 }
 
-export interface GateConfig {
-  id: number
-  camera_id: string
-  gate_id: string
-  location: string
-  line_start_x: number
-  line_start_y: number
-  line_end_x: number
-  line_end_y: number
-  enabled: number
-}
-
-export interface PeopleCountSummary {
-  camera_id: string
-  location: string
-  gate_id: string
-  in: number
-  out: number
-  occupancy: number
-}
-
-export interface PeopleCountPeriod {
-  period: string
-  in: number
-  out: number
-  total: number
-  occupancy: number
-}
-
-export interface PeopleCountReport {
-  summary: PeopleCountSummary[]
-  trend: PeopleCountPeriod[]
-  peaks: PeopleCountPeriod[]
-  rows: Record<string, unknown>[]
-  granularity: 'hour' | 'day'
+/** One AI model running (or not) on one camera — mirrors the backend CameraModelRun. */
+export interface CameraModelRun {
+  script_id: string
+  camera: string
+  status: 'running' | 'stopped'
+  camera_status: CameraStatus
+  /** False for a disabled instance, an offline camera, or one already running. */
+  can_run: boolean
+  mode: string
+  health: string
+  /** Why the camera cannot run / why the last start attempt failed (empty when fine). */
+  message: string
+  /** Instance switch owned by the Camera page; a disabled instance cannot run. */
+  enabled: boolean
+  /** Effective annotated output stream (set on the Camera page, shown on both). */
+  output: string
+  /** Display name of this camera's instance of the AI model. */
+  name: string
 }
 
 export interface Alert {
@@ -137,6 +124,12 @@ export interface Alert {
   severity: string
   camera?: string | null
   confidence?: string | null
+  // Optional envelope fields the backend projects from the durable `events`
+  // table (see models/schemas.py: Alert). Kept optional for older backends.
+  event_id?: string | null
+  event_type?: string | null
+  mode?: string
+  received_time?: string | null
 }
 
 // Per-camera AI model instance (index framework: cameraAI)
@@ -148,4 +141,43 @@ export interface CameraAI {
   enabled: boolean
   output?: string
   params?: Record<string, number | boolean>
+}
+
+export interface DashboardDefinition {
+  id: 'face' | 'inout' | 'ppe' | 'object'
+  title: string
+  subtitle: string
+}
+
+export interface DashboardRecord {
+  record_id: string
+  category: string
+  event_time: string
+  camera_id: string | null
+  script_id: string
+  person_name: string | null
+  recognized: boolean | null
+  status: string
+  violation: string | null
+  violations: string[]
+  zone: string | null
+  direction: string | null
+  gate_id: string | null
+  confidence: number | null
+  message: string
+  snapshot_url: string | null
+  mode: string
+}
+
+export interface DashboardStat {
+  label: string
+  value: number
+  tone: string
+}
+
+export interface DashboardQueryResult {
+  dashboard_id: string
+  total: number
+  stats: DashboardStat[]
+  records: DashboardRecord[]
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { store } from '../../store'
+import { defaultOutput, store } from '../../store'
 
 const props = defineProps<{ camera: string }>()
 const emit = defineEmits<{ confirm: [payload: { scriptId: string; name: string; enabled: boolean; output: string; params: Record<string, number | boolean> }] }>()
@@ -26,7 +26,7 @@ watch(
   (id) => {
     const s = store.scripts.find((x) => x.id === id)
     customName.value = s?.name ?? ''
-    output.value = id ? defaultOutput(id, props.camera) : ''
+    output.value = id ? defaultOutputFor(id, props.camera) : ''
     // 参数初始化为模型默认值（与 AI model setting 一致）
     const defaults: Record<string, number | boolean> = {}
     for (const p of s?.params ?? []) defaults[p.key] = p.value
@@ -35,8 +35,9 @@ watch(
   { immediate: true },
 )
 
-function defaultOutput(id: string, cam: string): string {
-  return `rtmp://demo.cosmos.local/annotated/${id}/${cam.toLowerCase().replace(/\s+/g, '-')}`
+function defaultOutputFor(id: string, cam: string): string {
+  // Same computation as the backend and the AI model page (store.defaultOutput).
+  return defaultOutput(id, cam.trim())
 }
 
 // 参数格式化（与 AI model setting 的 ScriptDetailModal 一致）
@@ -61,7 +62,7 @@ function confirm(): void {
     scriptId: scriptId.value,
     name: customName.value.trim() || selectedScript.value?.name || scriptId.value,
     enabled: enabled.value,
-    output: output.value.trim() || defaultOutput(scriptId.value, props.camera),
+    output: output.value.trim() || defaultOutputFor(scriptId.value, props.camera),
     params: params.value,
   })
 }

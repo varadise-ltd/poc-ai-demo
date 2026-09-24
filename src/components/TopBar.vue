@@ -18,10 +18,10 @@ function toggleFullscreen(): void {
       </div>
     </div>
     <div class="top-actions">
-      <span class="status"><span class="dot"></span> System operational</span>
-      <span>EN</span>
+      <span class="status"><span class="dot"></span> All systems operational</span>
+      <span class="language-chip">EN</span>
       <button class="top-btn" @click="toggleFullscreen">Fullscreen</button>
-      <span>⋮</span>
+      <button class="top-menu" aria-label="More options">⋮</button>
     </div>
   </header>
 </template>

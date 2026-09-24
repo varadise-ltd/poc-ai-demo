@@ -1,12 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import {
-  addStreamCamera,
-  cameraList,
   createScriptRecord,
-  defaultOutput,
-  removeStreamCamera,
-  setCameraOutput,
   store,
   updateScriptMetaRecord,
 } from '../../store'
@@ -15,6 +10,9 @@ import type { Script } from '../../types'
 const isAddMode = computed(() => store.scriptDetailMode === 'add')
 
 const script = computed(() => store.scripts.find((s) => s.id === store.currentScriptDetailId))
+
+// Face Recognition uses per-script detection params (mirrors gui.py / 1_facial.py)
+const hasParams = computed(() => !!script.value?.params?.length)
 
 // Editable organization / scenario (persisted to backend scripts.db on save)
 const organization = ref('')
@@ -29,22 +27,33 @@ watch(
   { immediate: true },
 )
 
-const assignedCameras = computed(() => script.value?.cameras ?? [])
-const availableCameras = computed(() =>
-  cameraList.value.filter((c) => !assignedCameras.value.includes(c)),
-)
+const title = computed(() => (isAddMode.value ? 'Add AI Model' : script.value?.name))
 
-// Face Recognition uses per-script detection params (mirrors gui.py / 1_facial.py)
-const hasParams = computed(() => !!script.value?.params?.length)
+// 新建 AI model 必须基于一个内置场景：检测器接线（detector_type/model/classes/params）
+// 是代码定义而非数据，后端会直接复制基座场景的接线。
+const baseOptions = computed(() => store.scripts.filter((s) => !s.custom))
+
+const baseScriptId = computed({
+  get: () => {
+    if (store.newScriptBaseId) return store.newScriptBaseId
+    return baseOptions.value[0]?.id ?? ''
+  },
+  set: (value: string) => {
+    store.newScriptBaseId = value
+  },
+})
+
+const canSave = computed(() => {
+  if (!isAddMode.value) return true
+  return !!store.newScriptName.trim() && !!baseScriptId.value
+})
 
 const description = computed(
   () => script.value?.description ?? 'Detect whether people are wearing safety helmets in configured areas.',
 )
 
-const title = computed(() => (isAddMode.value ? 'Add Script' : script.value?.name))
-
 const subtitle = computed(() =>
-  isAddMode.value ? 'Create a new analytics script.' : 'Configure this Script independently.',
+  isAddMode.value ? 'Create a new AI Model.' : 'Configure this Model independently.',
 )
 
 // Editable name / description (add mode uses new-script state)
@@ -62,15 +71,6 @@ const editableDescription = computed({
   },
 })
 
-function outputOf(cam: string): string {
-  const key = `${script.value?.id}::${cam}`
-  return store.cameraOutputs[key] ?? defaultOutput(script.value?.id ?? '', cam)
-}
-
-function onOutputChange(cam: string, value: string): void {
-  setCameraOutput(`${script.value?.id}::${cam}`, value)
-}
-
 function formatParamValue(value: number | boolean, type?: string): string {
   if (type === 'checkbox') return value ? 'Enabled' : 'Disabled'
   if (typeof value === 'number' && type === 'float') return value.toFixed(2)
@@ -80,9 +80,10 @@ function formatParamValue(value: number | boolean, type?: string): string {
 function saveScript(): void {
   if (isAddMode.value) {
     const name = store.newScriptName.trim()
-    if (!name) return
+    if (!name || !baseScriptId.value) return
     createScriptRecord({
       name,
+      baseScriptId: baseScriptId.value,
       description: store.newScriptDescription,
       organization: organization.value.trim(),
       scenario: scenario.value.trim(),
@@ -90,9 +91,12 @@ function saveScript(): void {
       .then((script) => {
         store.scriptDetailMode = 'edit'
         store.currentScriptDetailId = script.id
+        store.showScriptDetail = false
       })
       .catch((err) => alert(err instanceof Error ? err.message : String(err)))
-  } else if (script.value?.id) {
+    return
+  }
+  if (script.value?.id) {
     updateScriptMetaRecord(script.value.id, {
       organization: organization.value.trim(),
       scenario: scenario.value.trim(),
@@ -114,7 +118,7 @@ function saveScript(): void {
       </div>
       <div class="detail-body">
         <div class="config-section">
-          <h3>Script overview</h3>
+          <h3>AI Model overview</h3>
           <div class="form-grid">
             <div class="field full">
               <label>Name</label>
@@ -123,6 +127,17 @@ function saveScript(): void {
             <div class="field full">
               <label>Description</label>
               <input v-model="editableDescription" :readonly="!isAddMode" />
+            </div>
+            <div v-if="isAddMode" class="field full">
+              <label>Base AI model (detector wiring to clone)</label>
+              <select v-model="baseScriptId">
+                <option v-for="base in baseOptions" :key="base.id" :value="base.id">
+                  {{ base.name }}
+                </option>
+              </select>
+              <span class="subtitle">
+                Detector type, model, classes and detection parameters are inherited from this built-in AI model.
+              </span>
             </div>
             <div class="field">
               <label>Organization (owner tenant)</label>
@@ -166,48 +181,12 @@ function saveScript(): void {
           </div>
         </div>
 
-        <!-- Stream configuration (Video Source + RTMP Output) removed — use Camera output streams below -->
-
-        <!-- Camera output streams (edit mode only) -->
-        <div v-if="!isAddMode" class="config-section">
-          <h3>Camera output streams</h3>
-          <p class="subtitle" style="margin-bottom: 12px">
-            Each assigned camera ingests a raw stream and produces its own AI cam output stream. Set the output stream
-            for each camera.
-          </p>
-          <div class="stream-map">
-            <div class="stream-map-row head">
-              <div>Camera</div>
-              <div>Input stream (raw)</div>
-              <div>Output stream (AI cam)</div>
-              <div></div>
-            </div>
-            <div v-for="cam in assignedCameras" :key="cam" class="stream-map-row">
-              <div class="stream-cam">{{ cam }}</div>
-              <div class="stream-in">{{ store.cameraInputs[cam] ?? '—' }}</div>
-              <div class="stream-out">
-                <input :value="outputOf(cam)" @input="onOutputChange(cam, ($event.target as HTMLInputElement).value)" />
-              </div>
-              <button class="icon-btn stream-del" title="Remove camera" @click="removeStreamCamera(cam)">×</button>
-            </div>
-            <div v-if="availableCameras.length" class="stream-map-add">
-              <button class="btn primary" @click="addStreamCamera">+ Add camera</button>
-            </div>
-            <div v-else class="subtitle" style="margin-top: 8px">All cameras are assigned to this script.</div>
-          </div>
-        </div>
+        <!-- Camera output streams are managed on the AI model page (expand a row);
+             keeping the editor out of this modal avoids two sources of truth. -->
 
         <div class="config-section">
           <h3>Technical configuration</h3>
           <div class="form-grid">
-            <div class="field">
-              <label>Pipeline</label>
-              <input value="Running · AI analytics pipeline" />
-            </div>
-            <div class="field">
-              <label>Process ID</label>
-              <input value="PID 18424" />
-            </div>
             <div class="field">
               <label>Auto restart</label>
               <select>
@@ -224,7 +203,7 @@ function saveScript(): void {
 
         <div class="actions" style="justify-content: flex-end; margin-top: 22px">
           <button class="btn" @click="store.showScriptDetail = false">Cancel</button>
-          <button class="btn primary" :disabled="isAddMode && !editableName.trim()" @click="saveScript">Save</button>
+          <button class="btn primary" :disabled="!canSave" @click="saveScript">Save</button>
         </div>
       </div>
     </div>

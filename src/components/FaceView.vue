@@ -46,6 +46,18 @@ onMounted(async () => {
         </p>
         <button class="btn primary" @click="addFace">+ Add face data</button>
       </div>
+      <div v-if="store.faceNotice" class="notice face-notice">
+        <div>
+          <strong>{{ store.faceNotice.name }} saved.</strong>
+          <span class="subtitle" style="display: block">
+            Face check: {{ store.faceNotice.summary }}
+          </span>
+          <ul v-if="store.faceNotice.messages.length" style="margin: 6px 0 0; padding-left: 18px; color: #b8860b">
+            <li v-for="(message, i) in store.faceNotice.messages" :key="i">{{ message }}</li>
+          </ul>
+        </div>
+        <button class="icon-btn" title="Dismiss" @click="store.faceNotice = null">×</button>
+      </div>
       <div v-if="store.faceLoading" class="detail-empty">Loading face data…</div>
       <div v-else-if="store.faceError" class="detail-empty" style="color: var(--red)">{{ store.faceError }}</div>
       <div v-else class="config-list">

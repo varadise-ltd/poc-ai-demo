@@ -66,6 +66,20 @@ export const scripts: Script[] = [
     rtmpOutput: 'rtmp://cctv-ai-uat.varadise.cloud:1936/group/grQKLloOUX?token=EPICDJMGMP',
   },
   {
+    id: 'human',
+    name: 'Human detection',
+    meta: 'Person · Zone · Intrusion',
+    loaded: true,
+    cameras: ['Site Entrance Camera', 'Warehouse Camera', 'Demo Camera'],
+    description: 'Detect people in a monitored zone and report restricted-area intrusion.',
+    kpis: [
+      ['Humans detected', '6', 'Current frame'],
+      ['In zone', '4', 'Restricted area'],
+      ['Intrusion', '1', 'Review event'],
+      ['Confidence', '93%', 'Average'],
+    ],
+  },
+  {
     id: 'traffic',
     name: 'Traffic Counting',
     meta: 'Vehicles · Pedestrians · Direction',

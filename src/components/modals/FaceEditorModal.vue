@@ -13,7 +13,6 @@ const pendingFile = ref<File | null>(null)
 const saving = ref(false)
 const error = ref('')
 const clientWarnings = ref<string[]>([])
-const serverValidation = ref<FaceValidation | null>(null)
 
 // 双击预览图后按原始尺寸放大查看
 const zoomed = ref(false)
@@ -50,7 +49,7 @@ watch(
     if (!show) return
     error.value = ''
     clientWarnings.value = []
-    serverValidation.value = null
+    store.faceNotice = null
     pendingFile.value = null
     zoomed.value = false
     if (store.editingFaceId !== null) {
@@ -70,10 +69,20 @@ watch(
   },
 )
 
+// 客户端排重预检：姓名重复时立即提示，避免白跑一次请求。
+// 图片与「同一张脸」的判重以后端为准（需要像素哈希/人脸向量）。
+const duplicateName = computed(() => {
+  const trimmed = name.value.trim().toLowerCase()
+  if (!trimmed) return null
+  return store.faceData.find(
+    (face) => face.id !== store.editingFaceId && face.name.trim().toLowerCase() === trimmed,
+  ) ?? null
+})
+
 const canSave = computed(() => {
   const hasName = name.value.trim().length > 0
   const hasImage = store.editingFaceId !== null || pendingFile.value !== null
-  return hasName && hasImage && !saving.value
+  return hasName && hasImage && !saving.value && duplicateName.value === null
 })
 
 async function readImageSize(file: File): Promise<{ width: number; height: number } | null> {
@@ -113,7 +122,6 @@ async function onFileChange(event: Event): Promise<void> {
   }
   error.value = ''
   clientWarnings.value = []
-  serverValidation.value = null
   pendingFile.value = file
   preview.value = URL.createObjectURL(file)
   showPreview.value = true
@@ -149,12 +157,15 @@ async function save(): Promise<void> {
       }
       validation = await addFaceRecord(trimmed, pendingFile.value)
     }
-    serverValidation.value = validation ?? null
-    if (validation && validation.warnings.length > 0) {
-      // 有告警但仍保存成功，展示给用户，不关闭弹窗以便查看
-      error.value = ''
-      return
-    }
+    // 保存成功后立即关闭弹窗；后端校验告警改在 Face management 列表中提示，
+    // 避免用户以为保存失败而重复提交。
+    store.faceNotice = validation
+      ? {
+          name: trimmed,
+          summary: `${validation.width}×${validation.height} · ${validation.face_count} face(s) · detector: ${validation.detector}`,
+          messages: validation.warnings,
+        }
+      : null
     store.showFaceEditor = false
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -178,7 +189,12 @@ async function save(): Promise<void> {
         <div class="form-grid">
           <div class="field full">
             <label>Name</label>
-            <input v-model="name" placeholder="e.g. Alex Chen" />
+            <input v-model="name" placeholder="e.g. Alex Chen" @input="error = ''" />
+            <small v-if="duplicateName" class="dup-warning">
+              “{{ duplicateName.name }}” is already registered (id={{ duplicateName.id }}).
+              Edit that record instead of adding a duplicate.
+            </small>
+            <small v-else class="subtitle">Each person can be registered once.</small>
           </div>
           <div class="field full">
             <label>Image</label>
@@ -201,17 +217,8 @@ async function save(): Promise<void> {
               <li v-for="(w, i) in clientWarnings" :key="i">{{ w }}</li>
             </ul>
           </div>
-          <div v-if="serverValidation" class="field full">
-            <p class="subtitle" style="margin: 0 0 4px">
-              Face check: {{ serverValidation.width }}×{{ serverValidation.height }} ·
-              {{ serverValidation.face_count }} face(s) · detector: {{ serverValidation.detector }}
-            </p>
-            <ul v-if="serverValidation.warnings.length" style="margin: 0; padding-left: 18px; color: #b8860b">
-              <li v-for="(w, i) in serverValidation.warnings" :key="i">{{ w }}</li>
-            </ul>
-          </div>
           <div v-if="error" class="field full">
-            <span style="color: var(--red)">{{ error }}</span>
+            <p class="form-error">{{ error }}</p>
           </div>
         </div>
         <div class="actions" style="justify-content: flex-end; margin-top: 22px">

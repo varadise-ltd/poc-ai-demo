@@ -158,6 +158,10 @@ onBeforeUnmount(() => {
         <h1>AI Cam Live</h1>
         <p class="subtitle">Select a configured Script and Camera, then start the Script output stream.</p>
       </div>
+      <div class="page-head-meta">
+        <span class="eyebrow">LIVE WORKSPACE</span>
+        <span class="page-head-meta-value">{{ isRunning ? 'Streaming now' : 'Ready to preview' }}</span>
+      </div>
     </div>
 
     <div class="toolbar">

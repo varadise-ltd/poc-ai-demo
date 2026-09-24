@@ -7,9 +7,9 @@ import {
   historyEvents as initialHistoryEvents,
   scripts as initialScripts,
 } from './data'
-import type { Alert, Camera, CameraAI, EventItem, FaceData, FaceMeta, FaceValidation, GateConfig, HistoryEvent, PeopleCountReport, Script, ScriptRun } from './types'
+import type { Alert, Camera, CameraAI, CameraModelRun, EventItem, FaceData, FaceMeta, FaceValidation, HistoryEvent, Script, ScriptRun } from './types'
 
-export type TabId = 'demo' | 'people' | 'camera' | 'model' | 'dashboard' | 'face' | 'control' | 'config'
+export type TabId = 'demo' | 'camera' | 'model' | 'dashboard' | 'face'
 export const store = reactive({
   // Navigation
   activeTab: 'demo' as TabId,
@@ -38,26 +38,24 @@ export const store = reactive({
 
   // Runtime state
   scriptRuns: {} as Record<string, ScriptRun>,
+  // Per-camera run state, keyed by `${scriptId}::${camera}` (AI model page).
+  cameraRuns: {} as Record<string, CameraModelRun>,
   scriptLoading: false,
   scriptError: '',
   cameraStatus: { ...initialCameraStatus } as Record<string, 'online' | 'offline'>,
   cameraInputs: { ...initialCameraInputs } as Record<string, string>,
-  cameraOutputs: {} as Record<string, string>,
 
   // Camera management (SQLite-backed backend)
   cameras: [] as Camera[],
   cameraLoading: false,
   cameraError: '',
-  gateConfigs: [] as GateConfig[],
-  peopleReport: null as PeopleCountReport | null,
-  peopleLoading: false,
-  peopleError: '',
-  peopleGranularity: 'hour' as 'hour' | 'day',
-  peopleLocation: '',
 
   // Face management
   deletingFaceId: null as number | null,
   editingFaceId: null as number | null,
+  // 保存人脸后的后端校验结果提示。保存成功后弹窗一律关闭，告警改在列表中展示，
+  // 避免用户误以为保存失败而重复提交。
+  faceNotice: null as { name: string; summary: string; messages: string[] } | null,
 
   // Modal visibility
   showResultDetail: false,
@@ -88,6 +86,10 @@ export const store = reactive({
   scriptDetailMode: 'edit' as 'add' | 'edit',
   newScriptName: '',
   newScriptDescription: '',
+  // 新建 AI model 必须选择一个内置场景作为检测器接线基座。
+  newScriptBaseId: '',
+  // 已被软删除的 AI model（可恢复）。仅在选择“已删除”视图时按需加载。
+  deletedScripts: [] as Script[],
 
   // AI model instance detail (per camera, includes ROI setting tab)
   aiDetailCamera: null as string | null,
@@ -144,37 +146,12 @@ export function selectCamera(name: string): void {
   store.selectedCamera = name
 }
 
-export async function loadPeopleCounting(): Promise<void> {
-  store.peopleLoading = true
-  store.peopleError = ''
-  try {
-    const [gates, report] = await Promise.all([
-      api.listGateConfigs(store.selectedCamera),
-      api.getPeopleCountReport({ cameraId: store.selectedCamera, location: store.peopleLocation || undefined, granularity: store.peopleGranularity }),
-    ])
-    store.gateConfigs = gates
-    store.peopleReport = report
-  } catch (err) {
-    store.peopleError = err instanceof Error ? err.message : String(err)
-  } finally {
-    store.peopleLoading = false
-  }
-}
-
-// 启停脚本（Control 页）：运行 = 用第一个已分配 camera 启动后端检测；停止 = 停止后端检测
+// 启停脚本（AI model 页）：一次启停该脚本下所有可操作的相机。
+// 每台相机也可以单独在展开的 output stream 表格里 run/stop（toggleCameraRun）。
 export async function toggleRun(id: string): Promise<void> {
   const script = store.scripts.find((s) => s.id === id)
   if (!script || !script.cameras.length) return
-
-  const current = store.scriptRuns[id]?.status ?? 'stopped'
-  if (current === 'running') {
-    const run = await api.stopScript(id)
-    store.scriptRuns[id] = { status: run.status, camera: run.camera }
-  } else {
-    const camera = store.scriptRuns[id]?.camera ?? script.cameras[0]
-    const run = await api.runScript(id, camera)
-    store.scriptRuns[id] = { status: run.status, camera: run.camera }
-  }
+  await toggleScriptCameras(id)
 }
 
 // ---------------------------------------------------------------------------
@@ -224,11 +201,90 @@ export async function startSelectedScript(): Promise<void> {
 
 export async function stopSelectedScript(): Promise<void> {
   try {
-    await api.stopScript(store.selectedScriptId)
+    await api.stopScript(store.selectedScriptId, store.selectedCamera)
     store.scriptRuns[store.selectedScriptId] = { status: 'stopped' }
     store.running = false
   } catch (err) {
     throw err
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-camera run control (AI model page)
+// ---------------------------------------------------------------------------
+
+/** Key for one AI model instance on one camera. */
+export function cameraRunKey(scriptId: string, camera: string): string {
+  return `${scriptId}::${camera}`
+}
+
+/** Run state of one camera; falls back to camera connectivity when unknown. */
+export function cameraRun(scriptId: string, camera: string): CameraModelRun {
+  return (
+    store.cameraRuns[cameraRunKey(scriptId, camera)] ?? {
+      script_id: scriptId,
+      camera,
+      status: 'stopped',
+      camera_status: store.cameraStatus[camera] ?? 'offline',
+      can_run: (store.cameraStatus[camera] ?? 'offline') === 'online',
+      mode: 'REAL',
+      health: 'stopped',
+      message: '',
+    }
+  )
+}
+
+/** True when at least one camera of the AI model is running. */
+export function scriptHasRunningCamera(scriptId: string): boolean {
+  const prefix = `${scriptId}::`
+  return Object.entries(store.cameraRuns).some(
+    ([key, run]) => key.startsWith(prefix) && run.status === 'running',
+  )
+}
+
+/** Load the per-camera run states for one AI model. */
+export async function loadScriptCameraRuns(scriptId: string): Promise<void> {
+  try {
+    const runs = await api.listScriptCameras(scriptId)
+    for (const run of runs) store.cameraRuns[cameraRunKey(scriptId, run.camera)] = run
+  } catch {
+    // Keep previously known state; the row falls back to camera connectivity.
+  }
+}
+
+/** Load per-camera run states for every AI model (used on page load). */
+export async function loadAllCameraRuns(): Promise<void> {
+  await Promise.all(store.scripts.map((s) => loadScriptCameraRuns(s.id)))
+}
+
+/** Start or stop exactly one camera of one AI model. */
+export async function toggleCameraRun(scriptId: string, camera: string): Promise<void> {
+  const current = cameraRun(scriptId, camera)
+  const result =
+    current.status === 'running'
+      ? await api.stopScriptCamera(scriptId, camera)
+      : await api.runScriptCamera(scriptId, camera)
+  store.cameraRuns[cameraRunKey(scriptId, camera)] = result
+  syncScriptRunFromCameras(scriptId)
+}
+
+/** Start/stop every camera of one AI model that can be toggled. */
+export async function toggleScriptCameras(scriptId: string): Promise<void> {
+  const script = store.scripts.find((s) => s.id === scriptId)
+  if (!script) return
+  const stopping = scriptHasRunningCamera(scriptId)
+  for (const camera of script.cameras) {
+    const run = cameraRun(scriptId, camera)
+    if (stopping ? run.status === 'running' : run.can_run) {
+      await toggleCameraRun(scriptId, camera)
+    }
+  }
+}
+
+/** Mirror the aggregate camera state into the script-level run state. */
+function syncScriptRunFromCameras(scriptId: string): void {
+  store.scriptRuns[scriptId] = {
+    status: scriptHasRunningCamera(scriptId) ? 'running' : 'stopped',
   }
 }
 
@@ -262,8 +318,53 @@ export function defaultOutput(scriptId: string, cam: string): string {
   return `rtmp://demo.cosmos.local/annotated/${scriptId}/${cam.toLowerCase().replace(/\s+/g, '-')}`
 }
 
-export function setCameraOutput(key: string, value: string): void {
-  store.cameraOutputs[key] = value
+// ---------------------------------------------------------------------------
+// Camera × AI model assignments (one relation, shared by both pages)
+// ---------------------------------------------------------------------------
+
+/**
+ * Effective output stream for one camera, preferring the URL saved on the
+ * Camera page so both pages display the same thing.
+ */
+export function scriptOutput(scriptId: string, cam: string): string {
+  return cameraRun(scriptId, cam).output || defaultOutput(scriptId, cam)
+}
+
+/** Cameras that can still be assigned to a script (not already assigned). */
+export function availableStreamCameras(scriptId: string): string[] {
+  const target = script(scriptId)
+  if (!target) return []
+  return cameraList.value.filter((c) => !target.cameras.includes(c))
+}
+
+function script(scriptId: string): Script | undefined {
+  return store.scripts.find((s) => s.id === scriptId)
+}
+
+/**
+ * Assign a camera to an AI model.
+ *
+ * Persists through `/api/scripts/{id}/cameras/{camera}`, which writes the same
+ * relation row the Camera page creates — so the assignment survives a reload and
+ * shows up there too. The catalog is reloaded because `script.cameras` is derived
+ * from that relation.
+ */
+export async function addStreamCamera(scriptId: string, cam: string): Promise<void> {
+  if (!cam) return
+  await api.assignScriptCamera(scriptId, cam)
+  await Promise.all([loadScripts(), loadCameraAI(), loadScriptCameraRuns(scriptId)])
+}
+
+/**
+ * Unassign a camera from an AI model.
+ *
+ * Stops the camera's worker and drops its ROI on the backend, then refreshes both
+ * pages so the leftover instance disappears from the Camera page as well.
+ */
+export async function removeStreamCamera(scriptId: string, cam: string): Promise<void> {
+  await api.unassignScriptCamera(scriptId, cam)
+  delete store.cameraRuns[cameraRunKey(scriptId, cam)]
+  await Promise.all([loadScripts(), loadCameraAI()])
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +409,13 @@ export async function addCameraRecord(
   syncCameraMaps()
 }
 
+/**
+ * Update a camera.
+ *
+ * A rename is cascaded by the backend across the camera × AI-model relation and
+ * the ROI polygons, so the AI model page is reloaded here to pick the new name up
+ * (a stale entry would otherwise keep pointing at the old one).
+ */
 export async function updateCameraRecord(
   id: number,
   fields: {
@@ -320,17 +428,39 @@ export async function updateCameraRecord(
     org_admin?: string
   },
 ): Promise<void> {
+  const previous = store.cameras.find((c) => c.id === id)
+  const renamed = !!fields.name && !!previous && fields.name !== previous.name
   const cam = await api.updateCamera(id, fields)
   const idx = store.cameras.findIndex((c) => c.id === id)
   if (idx >= 0) store.cameras.splice(idx, 1, cam)
   syncCameraMaps()
+  if (renamed) await refreshAssignments()
 }
 
+/**
+ * Delete a camera.
+ *
+ * The backend drops every AI model of that camera, so both the instance list and
+ * the AI model catalog are reloaded: leaving them behind would show phantom
+ * assignments that can no longer be run.
+ */
 export async function removeCameraRecord(id: number): Promise<void> {
   await api.deleteCamera(id)
   const idx = store.cameras.findIndex((c) => c.id === id)
   if (idx >= 0) store.cameras.splice(idx, 1)
   syncCameraMaps()
+  await refreshAssignments()
+}
+
+/**
+ * Reload the shared camera × AI-model relation into both pages.
+ *
+ * The Camera page shows it as `cameraAI` instances, the AI model page as
+ * `script.cameras`, and both are derived from the same table — so any mutation
+ * made on either page has to refresh both to stay consistent.
+ */
+export async function refreshAssignments(): Promise<void> {
+  await Promise.all([loadCameras(), loadCameraAI(), loadScripts(), loadAllCameraRuns()])
 }
 
 // 将后端探测得到的摄像机状态（online/offline）同步到内存镜像
@@ -345,25 +475,6 @@ export async function checkCameraStatus(name: string): Promise<api.CameraCheckRe
   const res = await api.checkCameraStream(name)
   applyCameraStatus(name, res.status)
   return res
-}
-
-export function addStreamCamera(): void {
-  const script = store.scripts.find((s) => s.id === store.currentScriptDetailId)
-  if (!script) return
-  const available = cameraList.value.filter((c) => !script.cameras.includes(c))
-  if (!available.length) return
-  const cam = available[0]
-  script.cameras.push(cam)
-  store.cameraOutputs[`${script.id}::${cam}`] = defaultOutput(script.id, cam)
-}
-
-export function removeStreamCamera(cam: string): void {
-  const script = store.scripts.find((s) => s.id === store.currentScriptDetailId)
-  if (!script) return
-  const idx = script.cameras.indexOf(cam)
-  if (idx < 0) return
-  script.cameras.splice(idx, 1)
-  delete store.cameraOutputs[`${script.id}::${cam}`]
 }
 
 // ---------------------------------------------------------------------------
@@ -407,22 +518,67 @@ export async function removeFaceRecord(id: number): Promise<void> {
 // AI model CRUD (backend-driven)
 // ---------------------------------------------------------------------------
 
+/**
+ * Create a custom AI model. `baseScriptId` selects the built-in scenario whose
+ * detector wiring (detector_type / model / classes / params) is cloned, because
+ * that wiring is code-driven and the engine cannot run an invented model.
+ */
 export async function createScriptRecord(fields: {
   name: string
+  baseScriptId: string
   description?: string
   organization?: string
   scenario?: string
 }): Promise<Script> {
-  const script = await api.createScript(fields)
+  const script = await api.createScript({
+    name: fields.name,
+    base_script_id: fields.baseScriptId,
+    description: fields.description,
+    organization: fields.organization,
+    scenario: fields.scenario,
+  })
   store.scripts.push(script)
   return script
 }
 
+/** Soft-deleted AI models, kept in sync so the restore list is always current. */
+export async function loadDeletedScripts(): Promise<void> {
+  try {
+    store.deletedScripts = await api.listDeletedScripts()
+  } catch {
+    // 忽略加载错误，保留旧数据
+  }
+}
+
+/**
+ * Restore a soft-deleted AI model.
+ *
+ * Deletion only flags the model (`deleted=1`) and clears its runtime state, so
+ * restoring re-adds the same catalog entry and reloading refills the list.
+ */
+export async function restoreScriptRecord(id: string): Promise<Script> {
+  const script = await api.restoreScript(id)
+  store.deletedScripts = store.deletedScripts.filter((s) => s.id !== id)
+  await Promise.all([loadScripts(), loadDeletedScripts()])
+  return script
+}
+
+/** Delete one AI model: drop its local state and refresh the catalog from the backend. */
 export async function removeScriptRecord(id: string): Promise<void> {
   await api.deleteScript(id)
   const idx = store.scripts.findIndex((s) => s.id === id)
   if (idx >= 0) store.scripts.splice(idx, 1)
   store.cameraAI = store.cameraAI.filter((a) => a.scriptId !== id)
+  // Drop every per-camera run state of the deleted model so a re-created model
+  // with the same id cannot inherit stale Running/Stopped rows.
+  const prefix = `${id}::`
+  for (const key of Object.keys(store.cameraRuns)) {
+    if (key.startsWith(prefix)) delete store.cameraRuns[key]
+  }
+  delete store.scriptRuns[id]
+  // The backend hides it from the catalog; reload so filters and other views agree.
+  // Keep the restore list in step so the model can be brought back from the UI.
+  await Promise.all([loadScripts(), loadDeletedScripts()])
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +593,13 @@ export async function loadCameraAI(): Promise<void> {
   }
 }
 
+/**
+ * Add an AI model to one camera (Camera page).
+ *
+ * The backend writes the same relation row the AI model page reads, so the
+ * catalog and per-camera run states are reloaded: without it the AI model page
+ * would still report "No camera" and refuse to Run.
+ */
 export async function addCameraAIRecord(fields: {
   camera: string
   scriptId: string
@@ -447,9 +610,7 @@ export async function addCameraAIRecord(fields: {
 }): Promise<CameraAI> {
   const inst = await api.createCameraAI(fields)
   store.cameraAI.push(inst)
-  // 相机与脚本建立关联（若尚未关联）
-  const script = store.scripts.find((s) => s.id === inst.scriptId)
-  if (script && !script.cameras.includes(inst.camera)) script.cameras.push(inst.camera)
+  await Promise.all([loadScripts(), loadScriptCameraRuns(inst.scriptId)])
   return inst
 }
 
@@ -460,9 +621,25 @@ export async function updateCameraAIRecord(
   const inst = await api.updateCameraAI(iid, fields)
   const idx = store.cameraAI.findIndex((a) => a.iid === iid)
   if (idx >= 0) store.cameraAI.splice(idx, 1, inst)
+  // Disabling an instance stops it on the backend, and the AI model page reads
+  // `enabled` from the same row to decide whether Run is allowed.
+  if (fields.enabled !== undefined) {
+    await loadScriptCameraRuns(inst.scriptId)
+  }
 }
 
+/**
+ * Remove an AI model from one camera (Camera page).
+ *
+ * Also removes it from the AI model page's camera list, because that list is the
+ * same relation — otherwise the model would keep showing a camera it no longer has.
+ */
 export async function removeCameraAIRecord(iid: number): Promise<void> {
+  const inst = store.cameraAI.find((a) => a.iid === iid)
   await api.deleteCameraAI(iid)
   store.cameraAI = store.cameraAI.filter((a) => a.iid !== iid)
+  if (inst) {
+    delete store.cameraRuns[cameraRunKey(inst.scriptId, inst.camera)]
+    await loadScripts()
+  }
 }

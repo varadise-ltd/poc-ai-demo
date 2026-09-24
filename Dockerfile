@@ -34,7 +34,9 @@ COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 
+# 注意：nginx 默认只监听 IPv4（0.0.0.0:80），而容器内 localhost 会优先解析到
+# ::1，用 localhost 探测会被 connection refused。这里显式使用 127.0.0.1。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -q --spider http://localhost/ || exit 1
+    CMD wget -q --spider http://127.0.0.1/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

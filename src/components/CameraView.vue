@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { listCameras as apiListCameras } from '../api'
 import {
   addCameraAIRecord,
+  cameraRun,
+  loadAllCameraRuns,
   loadCameraAI,
   loadCameras,
   loadScripts,
@@ -66,6 +68,24 @@ function toggleCameraExpand(name: string): void {
 // 每个相机下的 AI model 实例：来自后端 camera_ai（index 的 cameraAI 结构）
 function cameraInstances(camName: string): CameraAI[] {
   return store.cameraAI.filter((a) => a.camera === camName)
+}
+
+/**
+ * Per-camera run state of one instance.
+ *
+ * Read from the shared `(scriptId, camera)` run state — the same source the AI
+ * model page uses — instead of the script-level aggregate, so one camera's row no
+ * longer reports "Running" just because another camera of that model is running.
+ */
+function instanceRun(inst: CameraAI) {
+  return cameraRun(inst.scriptId, inst.camera)
+}
+
+function instanceStatusLabel(inst: CameraAI): string {
+  const run = instanceRun(inst)
+  if (!run.enabled) return 'Disabled'
+  if (run.status === 'running') return 'Running'
+  return run.camera_status === 'online' ? 'Stopped' : 'Offline'
 }
 
 async function onToggleInstance(inst: CameraAI): Promise<void> {
@@ -171,7 +191,10 @@ async function onConfirmAddAi(payload: { scriptId: string; name: string; enabled
 }
 
 onMounted(async () => {
+  // The AI model catalog and the camera instances are two views of one relation,
+  // so both (and the per-camera run states) are loaded together.
   await Promise.all([loadCameras(), loadScripts(), loadCameraAI()])
+  await loadAllCameraRuns()
 })
 </script>
 
@@ -245,8 +268,8 @@ onMounted(async () => {
                   <button class="camera-link" @click="openAiDetail(inst)">{{ inst.name }}</button>
                   <div class="script-meta">Based on {{ store.scripts.find((s) => s.id === inst.scriptId)?.name || inst.scriptId }}</div>
                 </div>
-                <span class="pill" :class="{ gray: (store.scriptRuns[inst.scriptId]?.status ?? 'stopped') !== 'running' }">
-                  {{ (store.scriptRuns[inst.scriptId]?.status ?? 'stopped') === 'running' ? 'Running' : 'Stopped' }}
+                <span class="pill" :class="{ gray: instanceStatusLabel(inst) !== 'Running' }">
+                  {{ instanceStatusLabel(inst) }}
                 </span>
                 <div class="ai-menu-wrap">
                   <button class="icon-btn ai-menu-btn" title="More" @click="toggleAiMenu($event, inst)">⋯</button>

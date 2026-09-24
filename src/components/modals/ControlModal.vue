@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
 import { probeCamera } from '../../api'
-import { checkCameraStatus, defaultOutput, store, toggleRun as toggleRunScript } from '../../store'
+import { checkCameraStatus, scriptOutput, store, toggleRun as toggleRunScript } from '../../store'
 
 const script = computed(() => store.scripts.find((s) => s.id === store.controlSelectedId))
 const running = computed(() => (store.scriptRuns[script.value?.id ?? '']?.status ?? 'stopped') === 'running')
@@ -15,8 +15,9 @@ function inputUrl(cam: string): string {
 }
 
 function outputUrl(cam: string): string {
-  const id = script.value?.id ?? ''
-  return store.cameraOutputs[`${id}::${cam}`] ?? defaultOutput(id, cam)
+  // Same value the AI model page shows: the output stream stored on the
+  // camera × AI-model relation (set on the Camera page), else the default.
+  return scriptOutput(script.value?.id ?? '', cam)
 }
 
 function checkState(cam: string, kind: 'input' | 'output') {
