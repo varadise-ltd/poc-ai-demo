@@ -267,6 +267,7 @@ interface ScriptRecord {
   kpis?: string[][]
   custom?: boolean
   deleted?: boolean
+  is_counting?: boolean
   run?: { status: 'running' | 'stopped'; camera?: string | null; pid?: number | null }
 }
 
@@ -293,6 +294,7 @@ function toScript(r: ScriptRecord): Script {
     scenario: r.scenario ?? undefined,
     custom: r.custom ?? false,
     deleted: r.deleted ?? false,
+    isCounting: r.is_counting ?? false,
     params,
   }
 }
@@ -466,6 +468,106 @@ export async function clearRoi(scriptId: string, camera: string): Promise<void> 
   const q = new URLSearchParams({ camera })
   const res = await fetch(`${BASE_URL}/api/roi/${scriptId}?${q.toString()}`, { method: 'DELETE' })
   await handle(res)
+}
+
+// ---------------------------------------------------------------------------
+// Gate (count line) configuration — people counting in/out lines with arrows
+// ---------------------------------------------------------------------------
+
+export interface GateConfigInfo {
+  id?: number
+  camera_id: string
+  gate_id: string
+  location: string
+  line_start_x: number
+  line_start_y: number
+  line_end_x: number
+  line_end_y: number
+  enabled: number | boolean
+  /** +1: crossing toward the positive side is IN; -1: negative side is IN. */
+  arrow_sign: 1 | -1
+}
+
+export interface GateReport {
+  summary: { gate_id: string; location: string; in: number; out: number; net: number; occupancy: number }[]
+  trend: { period: string; gate_id: string; in: number; out: number; total: number }[]
+  peaks: { period: string; gate_id: string; total: number }[]
+  rows: Record<string, unknown>[]
+  baseline_assumption: string
+}
+
+export async function listGateConfigs(cameraId?: string): Promise<GateConfigInfo[]> {
+  const q = new URLSearchParams()
+  if (cameraId) q.set('camera_id', cameraId)
+  const qs = q.toString()
+  const res = await fetch(`${BASE_URL}/api/gates/config${qs ? `?${qs}` : ''}`)
+  const data = await handle<{ gates: GateConfigInfo[] }>(res)
+  return data.gates ?? []
+}
+
+export async function saveGateConfig(gate: {
+  camera_id: string
+  gate_id: string
+  location: string
+  line_start_x: number
+  line_start_y: number
+  line_end_x: number
+  line_end_y: number
+  enabled?: boolean
+  arrow_sign?: 1 | -1
+}): Promise<GateConfigInfo> {
+  const res = await fetch(`${BASE_URL}/api/gates/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: true, arrow_sign: 1, ...gate }),
+  })
+  const data = await handle<{ gate: GateConfigInfo }>(res)
+  return data.gate
+}
+
+export async function deleteGateConfig(cameraId: string, gateId: string): Promise<void> {
+  const res = await fetch(
+    `${BASE_URL}/api/gates/config/${encodeURIComponent(cameraId)}/${encodeURIComponent(gateId)}`,
+    { method: 'DELETE' },
+  )
+  await handle(res)
+}
+
+export async function getGateReport(filters: {
+  cameraId?: string
+  gateId?: string
+  location?: string
+  start?: string
+  end?: string
+  granularity?: 'hour' | 'day'
+  role?: string
+} = {}): Promise<GateReport> {
+  const q = new URLSearchParams()
+  if (filters.cameraId) q.set('camera_id', filters.cameraId)
+  if (filters.gateId) q.set('gate_id', filters.gateId)
+  if (filters.location) q.set('location', filters.location)
+  if (filters.start) q.set('start', filters.start)
+  if (filters.end) q.set('end', filters.end)
+  if (filters.granularity) q.set('granularity', filters.granularity)
+  if (filters.role) q.set('role', filters.role)
+  const qs = q.toString()
+  const res = await fetch(`${BASE_URL}/api/gates/report${qs ? `?${qs}` : ''}`)
+  return handle<GateReport>(res)
+}
+
+export function gateReportExportUrl(filters: {
+  cameraId?: string
+  start?: string
+  end?: string
+  granularity?: 'hour' | 'day'
+} = {}): string {
+  const q = new URLSearchParams()
+  if (filters.cameraId) q.set('camera_id', filters.cameraId)
+  if (filters.start) q.set('start', filters.start)
+  if (filters.end) q.set('end', filters.end)
+  if (filters.granularity) q.set('granularity', filters.granularity)
+  const qs = q.toString()
+  return `${BASE_URL}/api/gates/export${qs ? `?${qs}` : ''}`
 }
 
 // ---------------------------------------------------------------------------

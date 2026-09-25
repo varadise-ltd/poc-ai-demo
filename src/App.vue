@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import TopBar from './components/TopBar.vue'
 import TabNav from './components/TabNav.vue'
-import DemoView from './components/DemoView.vue'
+import AICamLiveView from './components/AICamLiveView.vue'
 import CameraView from './components/CameraView.vue'
 import ControlView from './components/ControlView.vue'
 import DashboardView from './components/DashboardView.vue'
@@ -14,7 +14,7 @@ import { store } from './store'
     <TopBar />
     <TabNav />
     <main class="app-main">
-      <DemoView v-show="store.activeTab === 'demo'" />
+      <AICamLiveView v-show="store.activeTab === 'demo'" />
       <CameraView v-show="store.activeTab === 'camera'" />
       <ControlView v-show="store.activeTab === 'model'" />
       <DashboardView v-show="store.activeTab === 'dashboard'" />

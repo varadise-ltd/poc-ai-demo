@@ -2,7 +2,10 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   clearRoi as apiClearRoi,
+  deleteGateConfig,
   getRoi,
+  listGateConfigs,
+  saveGateConfig,
   saveRoi as apiSaveRoi,
   snapshotUrl,
 } from '../../api'
@@ -117,6 +120,9 @@ async function loadRoiForSelection(): Promise<void> {
   roiPolygons.value = []
   currentPoints.value = []
   roiDrawing.value = false
+  lineDrawing.value = false
+  lineStartPoint.value = null
+  gateLines.value = []
   selectedPoint.value = null
   pointMenu.value = null
   roiStatus.value = ''
@@ -159,6 +165,8 @@ function toggleDrawing(): void {
     roiStatus.value = 'Please click 📷 Load Frame first, then start drawing.'
     return
   }
+  lineDrawing.value = false
+  lineStartPoint.value = null
   roiDrawing.value = !roiDrawing.value
   selectedPoint.value = null
   pointMenu.value = null
@@ -175,12 +183,21 @@ function onFrameLoad(e: Event): void {
   const img = e.target as HTMLImageElement
   roiNaturalW.value = img.naturalWidth
   roiNaturalH.value = img.naturalHeight
+  // Counting scripts: load saved count lines once the real frame size is known
+  // (normalized coords -> pixel coords conversion needs naturalW/H).
+  if (isCountingScript.value && !gateLines.value.length) {
+    void loadGateLines()
+  }
 }
 
 function pointFromEvent(e: MouseEvent): [number, number] | null {
   const img = roiImage.value
   if (!img || !roiNaturalW.value || !roiNaturalH.value) return null
   const rect = img.getBoundingClientRect()
+  if (!img.complete || !img.naturalWidth || rect.width <= 0 || rect.height <= 0) {
+    roiStatus.value = 'Frame is not ready — load a camera frame before drawing.'
+    return null
+  }
   const x = Math.round(((e.clientX - rect.left) / rect.width) * roiNaturalW.value)
   const y = Math.round(((e.clientY - rect.top) / rect.height) * roiNaturalH.value)
   const cx = Math.min(roiNaturalW.value, Math.max(0, x))
@@ -197,6 +214,10 @@ function addPoint(e: MouseEvent): void {
 
 function onCanvasClick(e: MouseEvent): void {
   pointMenu.value = null
+  if (lineDrawing.value) {
+    onLineCanvasClick(e)
+    return
+  }
   if (!roiDrawing.value) {
     roiStatus.value = 'Click ✏️ Drawing ROI to start drawing points.'
     return
@@ -205,6 +226,7 @@ function onCanvasClick(e: MouseEvent): void {
 }
 
 function onCanvasDblClick(e: MouseEvent): void {
+  if (lineDrawing.value) return
   if (!roiDrawing.value) return
   pointMenu.value = null
   const n = currentPoints.value.length
@@ -426,6 +448,214 @@ function insertPointOnEdge(e: MouseEvent, onlyExisting = false): boolean {
   return true
 }
 
+// ---------------------------------------------------------------------------
+// Count line (gate) drawing — only for counting scripts (People Counting).
+// 用户画一条线 + 箭头方向（IN 侧）；后端 GatePipeline 按穿越方向统计进出。
+// ---------------------------------------------------------------------------
+interface GateLineLocal {
+  gateId: string
+  location: string
+  start: [number, number] // pixel coords on the natural-size frame
+  end: [number, number]
+  arrowSign: 1 | -1 // +1: crossing toward the positive side is IN
+  saved: boolean
+}
+const isCountingScript = computed(() => script.value?.isCounting === true)
+const gateLines = ref<GateLineLocal[]>([])
+const lineDrawing = ref(false)
+const lineStartPoint = ref<[number, number] | null>(null)
+const gateSaving = ref(false)
+const gateLoading = ref(false)
+
+function toggleLineDrawing(): void {
+  if (roiFrameKey.value === 0) {
+    roiStatus.value = 'Please click 📷 Load Frame first, then draw the count line.'
+    return
+  }
+  lineDrawing.value = !lineDrawing.value
+  lineStartPoint.value = null
+  if (lineDrawing.value) {
+    roiDrawing.value = false
+    currentPoints.value = []
+    roiStatus.value = 'Count line mode ON — click two points on the frame to draw the line. The arrow points at the IN side; use ⇄ Flip to reverse.'
+  } else {
+    roiStatus.value = 'Count line mode OFF.'
+  }
+}
+
+function onLineCanvasClick(e: MouseEvent): void {
+  const pt = pointFromEvent(e)
+  if (!pt) return
+  if (!lineStartPoint.value) {
+    lineStartPoint.value = pt
+    roiStatus.value = `Line start (${pt[0]}, ${pt[1]}) — click the end point.`
+    return
+  }
+  const start = lineStartPoint.value
+  if (Math.hypot(pt[0] - start[0], pt[1] - start[1]) < 10) {
+    roiStatus.value = 'Line too short — click a farther end point.'
+    return
+  }
+  const nextId = gateLines.value.length + 1
+  gateLines.value = [
+    ...gateLines.value,
+    {
+      gateId: `line-${nextId}`,
+      location: `Line ${nextId}`,
+      start,
+      end: pt,
+      arrowSign: 1,
+      saved: false,
+    },
+  ]
+  lineStartPoint.value = null
+  roiStatus.value = `Count line #${nextId} added — drag endpoints to adjust, ⇄ Flip to reverse IN/OUT, then 💾 Save Lines.`
+}
+
+/** 箭头单位法向量（指向 IN 侧）；与后端 draw_overlay 相同的约定。 */
+function arrowVector(line: GateLineLocal): { nx: number; ny: number; mx: number; my: number } {
+  const dx = line.end[0] - line.start[0]
+  const dy = line.end[1] - line.start[1]
+  const len = Math.hypot(dx, dy) || 1
+  // 正侧单位法向 = (-dy, dx)/len；arrowSign=-1 时翻转指向负侧。
+  let nx = -dy / len
+  let ny = dx / len
+  if (line.arrowSign <= 0) {
+    nx = -nx
+    ny = -ny
+  }
+  return { nx, ny, mx: (line.start[0] + line.end[0]) / 2, my: (line.start[1] + line.end[1]) / 2 }
+}
+
+function arrowTip(line: GateLineLocal): [number, number] {
+  const { nx, ny, mx, my } = arrowVector(line)
+  const len = Math.max(28, Math.hypot(line.end[0] - line.start[0], line.end[1] - line.start[1]) * 0.22)
+  return [mx + nx * len, my + ny * len]
+}
+
+function arrowTail(line: GateLineLocal): [number, number] {
+  const { nx, ny, mx, my } = arrowVector(line)
+  const len = Math.max(28, Math.hypot(line.end[0] - line.start[0], line.end[1] - line.start[1]) * 0.22)
+  return [mx + nx * len * 0.35, my + ny * len * 0.35]
+}
+
+function flipGateLine(index: number): void {
+  gateLines.value = gateLines.value.map((line, i) =>
+    i === index ? { ...line, arrowSign: (line.arrowSign === 1 ? -1 : 1) as 1 | -1 } : line,
+  )
+  roiStatus.value = `Line #${index + 1} direction flipped — the arrow now marks the new IN side. Save to apply.`
+}
+
+async function removeGateLine(index: number): Promise<void> {
+  const line = gateLines.value[index]
+  gateLines.value = gateLines.value.filter((_, i) => i !== index)
+  if (line?.saved) {
+    try {
+      await deleteGateConfig(cameraName.value, line.gateId)
+      roiStatus.value = `Line "${line.gateId}" deleted from backend & database.`
+    } catch (err) {
+      roiStatus.value = roiErrorMessage(err)
+    }
+  } else {
+    roiStatus.value = `Line #${index + 1} removed (was not saved yet).`
+  }
+}
+
+async function loadGateLines(): Promise<void> {
+  if (!isCountingScript.value || !cameraName.value) return
+  gateLoading.value = true
+  try {
+    const gates = await listGateConfigs(cameraName.value)
+    gateLines.value = gates
+      .filter((g) => g.enabled)
+      .map((g) => ({
+        gateId: g.gate_id,
+        location: g.location,
+        start: [Math.round(g.line_start_x * roiNaturalW.value), Math.round(g.line_start_y * roiNaturalH.value)] as [number, number],
+        end: [Math.round(g.line_end_x * roiNaturalW.value), Math.round(g.line_end_y * roiNaturalH.value)] as [number, number],
+        arrowSign: g.arrow_sign === -1 ? -1 : 1,
+        saved: true,
+      }))
+    if (gateLines.value.length) {
+      roiStatus.value = (roiStatus.value ? `${roiStatus.value} ` : '') + `Loaded ${gateLines.value.length} saved count line(s).`
+    }
+  } catch (err) {
+    roiStatus.value = roiErrorMessage(err)
+  } finally {
+    gateLoading.value = false
+  }
+}
+
+async function saveGateLines(): Promise<void> {
+  if (!isCountingScript.value || gateSaving.value) return
+  if (!gateLines.value.length) {
+    roiStatus.value = 'No count line to save — enable ✏️ Draw Line and click two points first.'
+    return
+  }
+  gateSaving.value = true
+  try {
+    const savedLines: GateLineLocal[] = []
+    for (const line of gateLines.value) {
+      const gate = await saveGateConfig({
+        camera_id: cameraName.value,
+        gate_id: line.gateId,
+        location: line.location || line.gateId,
+        line_start_x: line.start[0] / roiNaturalW.value,
+        line_start_y: line.start[1] / roiNaturalH.value,
+        line_end_x: line.end[0] / roiNaturalW.value,
+        line_end_y: line.end[1] / roiNaturalH.value,
+        enabled: true,
+        arrow_sign: line.arrowSign,
+      })
+      savedLines.push({
+        gateId: gate.gate_id,
+        location: gate.location,
+        start: line.start,
+        end: line.end,
+        arrowSign: gate.arrow_sign === -1 ? -1 : 1,
+        saved: true,
+      })
+    }
+    gateLines.value = savedLines
+    lineDrawing.value = false
+    lineStartPoint.value = null
+    roiStatus.value = `Saved ${savedLines.length} count line(s) for ${cameraName.value} — running workers hot-reload the new lines & arrow directions.`
+  } catch (err) {
+    roiStatus.value = roiErrorMessage(err)
+  } finally {
+    gateSaving.value = false
+  }
+}
+
+// Drag count-line endpoints while in line mode.
+const draggingLine = ref<{ index: number; point: 'start' | 'end' } | null>(null)
+
+function startDragLinePoint(e: MouseEvent, index: number, point: 'start' | 'end'): void {
+  if (!lineDrawing.value) return
+  if (e.button !== 0) return
+  e.preventDefault()
+  e.stopPropagation()
+  draggingLine.value = { index, point }
+  window.addEventListener('mousemove', onDragLineMove)
+  window.addEventListener('mouseup', stopDragLinePoint)
+}
+
+function onDragLineMove(e: MouseEvent): void {
+  const target = draggingLine.value
+  if (!target) return
+  const pt = pointFromEvent(e)
+  if (!pt) return
+  gateLines.value = gateLines.value.map((line, i) =>
+    i === target.index ? { ...line, [target.point]: pt } : line,
+  )
+}
+
+function stopDragLinePoint(): void {
+  draggingLine.value = null
+  window.removeEventListener('mousemove', onDragLineMove)
+  window.removeEventListener('mouseup', stopDragLinePoint)
+}
+
 // Clear ROI 二次确认
 const showClearRoiConfirm = ref(false)
 const roiClearing = ref(false)
@@ -441,7 +671,7 @@ function askClearRoi(): void {
 }
 
 async function confirmClearRoi(): Promise<void> {
-  if (!store.aiDetailScriptId) return
+  if (!store.aiDetailScriptId || roiClearing.value || roiSaving.value) return
   roiClearing.value = true
   roiClearError.value = ''
   try {
@@ -454,16 +684,28 @@ async function confirmClearRoi(): Promise<void> {
     roiStatus.value = `ROI cleared for ${store.aiDetailScriptId} · ${cameraName.value} (backend + database).`
     showClearRoiConfirm.value = false
   } catch (err) {
-    roiClearError.value = err instanceof Error ? err.message : String(err)
+    roiClearError.value = roiErrorMessage(err)
   } finally {
     roiClearing.value = false
   }
 }
 
 async function saveRoiLocal(): Promise<void> {
-  if (!store.aiDetailScriptId) return
+  if (!store.aiDetailScriptId || roiSaving.value || roiClearing.value) return
+  if (currentPoints.value.length) {
+    if (currentPoints.value.length < 3) {
+      roiStatus.value = 'ROI needs at least 3 points. Add more points before saving.'
+      return
+    }
+    finalizeRoi()
+  }
   if (!roiPolygons.value.length) {
     roiStatus.value = 'No finalized ROI to save — draw at least one polygon (double-click to finish).'
+    return
+  }
+  if (roiPolygons.value.some((polygon) =>
+    polygon.points.length < 3 || polygon.points.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y)))) {
+    roiStatus.value = 'Invalid ROI coordinates — load a frame and redraw the ROI.'
     return
   }
   roiSaving.value = true
@@ -476,11 +718,20 @@ async function saveRoiLocal(): Promise<void> {
     selectedPoint.value = null
     pointMenu.value = null
     roiStatus.value = `Saved ${roiPolygons.value.length} ROI polygon(s) · ${store.aiDetailScriptId} · ${cameraName.value}`
+    // The ROI is persisted and the detector reload has been requested.
+    // Close the same modal for every camera/model combination.
+    close()
   } catch (err) {
-    roiStatus.value = err instanceof Error ? err.message : String(err)
+    roiStatus.value = roiErrorMessage(err)
   } finally {
     roiSaving.value = false
   }
+}
+
+function roiErrorMessage(err: unknown): string {
+  return err instanceof TypeError
+    ? 'Cannot reach backend. Ensure the local API on port 8000 is running, then retry. Changes have not been confirmed saved.'
+    : err instanceof Error ? err.message : String(err)
 }
 
 // 打开 modal 时重置状态并载入该组合的 ROI + 实例配置
@@ -498,6 +749,8 @@ watch(
 onBeforeUnmount(() => {
   window.removeEventListener('mousemove', onDragMove)
   window.removeEventListener('mouseup', stopDragPoint)
+  window.removeEventListener('mousemove', onDragLineMove)
+  window.removeEventListener('mouseup', stopDragLinePoint)
 })
 </script>
 
@@ -639,8 +892,35 @@ onBeforeUnmount(() => {
                 💾 Save ROI
               </button>
             </div>
+            <div v-if="isCountingScript" class="roi-toolbar">
+              <button
+                class="btn"
+                :class="{ 'drawing-active': lineDrawing }"
+                :disabled="gateLoading"
+                title="Draw a count line with an IN-direction arrow (people counting)"
+                @click="toggleLineDrawing"
+              >
+                ↔️ Draw Count Line
+              </button>
+              <button
+                class="btn primary"
+                :disabled="gateSaving || !gateLines.length"
+                title="Save count lines + arrow directions to backend and database"
+                @click="saveGateLines"
+              >
+                {{ gateSaving ? 'Saving…' : '💾 Save Lines' }}
+              </button>
+              <span v-for="(line, i) in gateLines" :key="line.gateId" class="gate-line-chip">
+                <strong>{{ line.location || line.gateId }}</strong>
+                <button class="btn" title="Flip the IN/OUT arrow direction" @click="flipGateLine(i)">⇄ Flip</button>
+                <button class="btn danger" title="Delete this count line" @click="removeGateLine(i)">🗑</button>
+              </span>
+            </div>
             <div class="roi-hint">
-              <template v-if="roiDrawing">
+              <template v-if="lineDrawing">
+                ↔️ Count line mode — click two points to draw the line · drag endpoints to adjust · ⇄ Flip reverses the IN/OUT arrow · 💾 Save Lines persists to backend &amp; database · the arrow always points toward the IN side
+              </template>
+              <template v-else-if="roiDrawing">
                 ✏️ Drawing mode — click to add points · double-click to finish each ROI · double-click an existing ROI edge to add a point · click a point to select it · right-click to delete the selected point · then 💾 Save ROI
               </template>
               <template v-else>
@@ -666,6 +946,51 @@ onBeforeUnmount(() => {
                 @load="onFrameLoad"
               />
               <svg class="roi-overlay" :viewBox="`0 0 ${roiNaturalW} ${roiNaturalH}`">
+                <defs>
+                  <marker id="gate-arrow-head" viewBox="0 0 10 10" refX="8" refY="5"
+                          markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#00c8ff" />
+                  </marker>
+                </defs>
+                <!-- Count lines with IN-direction arrows (people counting) -->
+                <g v-for="(line, li) in gateLines" :key="'gate' + li">
+                  <line
+                    :x1="line.start[0]" :y1="line.start[1]"
+                    :x2="line.end[0]" :y2="line.end[1]"
+                    class="gate-line"
+                  />
+                  <line
+                    :x1="arrowTail(line)[0]" :y1="arrowTail(line)[1]"
+                    :x2="arrowTip(line)[0]" :y2="arrowTip(line)[1]"
+                    class="gate-arrow"
+                    marker-end="url(#gate-arrow-head)"
+                  />
+                  <text :x="arrowTip(line)[0]" :y="arrowTip(line)[1] - 10" class="gate-arrow-label">
+                    IN → {{ line.location || line.gateId }}
+                  </text>
+                  <circle
+                    :cx="line.start[0]" :cy="line.start[1]" r="8"
+                    class="roi-point gate-endpoint"
+                    @mousedown.prevent.stop="startDragLinePoint($event, li, 'start')"
+                  />
+                  <circle
+                    :cx="line.end[0]" :cy="line.end[1]" r="8"
+                    class="roi-point gate-endpoint"
+                    @mousedown.prevent.stop="startDragLinePoint($event, li, 'end')"
+                  />
+                </g>
+                <!-- In-progress line while drawing -->
+                <line
+                  v-if="lineStartPoint"
+                  :x1="lineStartPoint[0]" :y1="lineStartPoint[1]"
+                  :x2="lineStartPoint[0]" :y2="lineStartPoint[1]"
+                  class="gate-line pending"
+                />
+                <circle
+                  v-if="lineStartPoint"
+                  :cx="lineStartPoint[0]" :cy="lineStartPoint[1]" r="8"
+                  class="roi-point gate-endpoint"
+                />
                 <g v-for="(poly, pi) in roiPolygons" :key="pi">
                   <polygon
                     :points="poly.points.map((p) => `${p[0]},${p[1]}`).join(' ')"

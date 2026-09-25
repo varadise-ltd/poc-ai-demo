@@ -1521,6 +1521,55 @@ body:has(.detail-modal.show) {
   fill: #4da3ff;
 }
 
+/* Count lines (people counting gates) + IN-direction arrows */
+.gate-line {
+  stroke: #ffc800;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.gate-line.pending {
+  stroke: rgba(255, 200, 0, 0.5);
+  stroke-dasharray: 6 4;
+}
+
+.gate-arrow {
+  stroke: #00c8ff;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.gate-arrow-label {
+  fill: #00c8ff;
+  font-size: 16px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(4, 14, 22, 0.85);
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.roi-point.gate-endpoint {
+  fill: #ffc800;
+}
+
+.gate-line-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+  color: var(--navy);
+}
+
+.gate-line-chip .btn {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
 .roi-point-menu {
   position: fixed;
   z-index: 60;

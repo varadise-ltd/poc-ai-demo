@@ -46,7 +46,7 @@ poc-ai-demo/
     └── components/
         ├── TopBar.vue
         ├── TabNav.vue
-        ├── DemoView.vue       # AI Cam Live
+        ├── AICamLiveView.vue  # AI Cam Live
         ├── CameraView.vue     # Camera setting
         ├── ControlView.vue    # AI model
         ├── DashboardView.vue  # Dashboard

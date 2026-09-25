@@ -30,6 +30,8 @@ export interface Script {
   custom?: boolean
   /** Soft-deleted model: hidden from the catalog, shown only in the restore list. */
   deleted?: boolean
+  /** Counting script (People Counting / gate): supports count lines with in/out arrows. */
+  isCounting?: boolean
 }
 
 export interface EventItem {

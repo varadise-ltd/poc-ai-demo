@@ -18,7 +18,7 @@ const orgAdmin = ref('')
 const saving = ref(false)
 const error = ref('')
 
-// RTMP URL 校验状态
+// 串流 URL 校验状态（支持 RTSP/RTMP/HTTP(S)，带或不带用户名密码）
 const rtmpError = ref('')
 const rtmpProbe = ref<CameraProbeResult | null>(null)
 const checking = ref(false)
@@ -44,22 +44,37 @@ const canSave = computed(() => {
   return hasName && !saving.value && !checking.value
 })
 
-// 前端 URL 格式校验（快速、无需请求后端）
+const CREDENTIAL_HINT =
+  ' If the username/password contains special characters (such as : / # ? @), percent-encode them (e.g. / -> %2F, # -> %23).'
+
+// 前端 URL 格式校验（快速、无需请求后端）。
+// 与后端 camera_io.validate_stream_url 保持一致：支持带/不带 user:password@
+// 的 rtsp/rtmp/http(s) URL；不用 new URL()，因为未转义密码会使其抛异常。
 function validateUrlFormat(url: string): string | null {
   const value = url.trim()
-  if (!value) return 'RTMP input URL is required.'
+  if (!value) return 'Input URL is required.'
   const schemeMatch = value.match(/^([a-z][a-z0-9+.-]*):\/\//i)
-  if (!schemeMatch) return 'URL must start with a scheme, e.g. rtmp://.'
+  if (!schemeMatch) return 'URL must start with a scheme, e.g. rtsp:// or rtmp://.'
   const scheme = schemeMatch[1].toLowerCase()
   const allowed = ['rtmp', 'rtmps', 'rtsp', 'rtsps', 'http', 'https']
   if (!allowed.includes(scheme)) {
-    return `Unsupported scheme "${scheme}". Use rtmp/rtsp/http(s).`
+    return `Unsupported scheme "${scheme}". Use rtsp/rtmp/http(s).`
   }
-  try {
-    const parsed = new URL(value)
-    if (!parsed.hostname) return 'URL has no host.'
-  } catch {
-    return 'Invalid URL format.'
+  // 去掉可选的 user:password@（密码允许任意字符，以最后一个 @ 为界）
+  const rest = value.slice(schemeMatch[0].length)
+  const at = rest.lastIndexOf('@')
+  const authorityAndPath = at >= 0 ? rest.slice(at + 1) : rest
+  const authority = authorityAndPath.split(/[/?#]/)[0]
+  const hostPort = authority.replace(/^\[.*\]/, (m) => m) // IPv6 字面量保持原样
+  if (!hostPort) return 'URL has no host.' + CREDENTIAL_HINT
+  const portMatch = hostPort.match(/:(\d*)$/)
+  if (portMatch && portMatch[1]) {
+    const port = Number(portMatch[1])
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return `Port "${portMatch[1]}" is not valid (1-65535).` + CREDENTIAL_HINT
+    }
+  } else if (portMatch) {
+    // 空端口（如 host:/path）：交给后端判断，这里不阻断
   }
   return null
 }
@@ -156,7 +171,8 @@ async function save(): Promise<void> {
       </div>
       <div class="detail-body">
         <p class="subtitle" style="margin-bottom: 16px">
-          Paste the RTMP address assigned by CCTV Hub to register this raw camera.
+          Paste the stream address (RTSP / RTMP / HTTP(S)) assigned by CCTV Hub to register this raw camera.
+          URLs with embedded credentials (e.g. rtsp://user:pass@host:554/…) are supported.
         </p>
         <div class="form-grid">
           <div class="field full">
@@ -164,9 +180,16 @@ async function save(): Promise<void> {
             <input v-model="name" />
           </div>
           <div class="field full">
-            <label>RTMP input URL</label>
+            <label>Stream input URL (RTSP / RTMP)</label>
             <div class="rtmp-row">
-              <input v-model="rtmp" :class="{ invalid: !!rtmpError }" @blur="onRtmpBlur" @input="rtmpError = ''" />
+              <input
+                v-model="rtmp"
+                :class="{ invalid: !!rtmpError }"
+                placeholder="rtsp://user:pass@host:1025/cam/realmonitor?channel=1&subtype=0"
+                spellcheck="false"
+                @blur="onRtmpBlur"
+                @input="rtmpError = ''"
+              />
               <button class="btn" :disabled="checking || !rtmp.trim()" @click="validateStream">
                 {{ checking ? 'Checking…' : 'Check stream' }}
               </button>

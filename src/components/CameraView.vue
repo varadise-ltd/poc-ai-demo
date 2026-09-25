@@ -203,7 +203,7 @@ onMounted(async () => {
     <div class="page-head">
       <div>
         <h1>Camera setting</h1>
-        <p class="subtitle">Register raw cameras by pasting the RTMP address assigned by CCTV Hub.</p>
+        <p class="subtitle">Register raw cameras by pasting the stream address (RTSP / RTMP, with or without username &amp; password) assigned by CCTV Hub.</p>
       </div>
     </div>
 

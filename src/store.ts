@@ -30,7 +30,7 @@ export const store = reactive({
   selectedScriptId: 'helmet',
   selectedCamera: 'Site Entrance Camera',
 
-  // Demo view state
+  // AI Cam Live view state
   running: false,
   overlay: true,
   previewPaused: false,
