@@ -16,7 +16,8 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-# 空字符串 = 同源相对路径（api.ts: import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'）
+# 空字符串 = 同源相对路径（api.ts: VITE_API_BASE 已定义则直接使用，未定义时
+# 才回退到「页面所在主机的 8000 端口」）
 ARG VITE_API_BASE=""
 ENV VITE_API_BASE=$VITE_API_BASE
 
@@ -29,7 +30,15 @@ RUN npm run build
 # ---- 运行阶段 ----
 FROM nginx:1.27-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# 用 envsubst 模板而非写死的 nginx.conf：后端主机名可在运行时注入。
+# 官方 nginx 入口脚本会把 /etc/nginx/templates/*.template 用环境变量替换后
+# 生成 /etc/nginx/conf.d/default.conf。默认 BACKEND_HOST=backend（compose 服务名）；
+# 云上单独 run 前端容器时用 -e BACKEND_HOST=<真实后端域名/IP> 覆盖。
+ENV BACKEND_HOST=backend
+# 只替换 BACKEND_HOST；否则 envsubst 会误处理 nginx 自己的变量（$host、$scheme、
+# $proxy_add_x_forwarded_for），导致生成的 nginx.conf 无效。
+ENV NGINX_ENVSUBST_TEMPLATE_VARS=BACKEND_HOST
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80
