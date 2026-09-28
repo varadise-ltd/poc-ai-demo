@@ -1,8 +1,11 @@
 # AI Cam POC Center 前端 nginx 配置模板
 # 说明：官方 nginx 镜像启动时会用 envsubst 处理 /etc/nginx/templates/*.template，
-# 把 ${BACKEND_HOST} 替换为运行时的环境变量后写入 /etc/nginx/conf.d/default.conf。
-# 这样后端服务名不再写死，本地 compose 用默认值 backend，云上部署时用
-# -e BACKEND_HOST=<真实后端域名/服务名> 覆盖即可。
+# 把 ${BACKEND_HOST} / ${NGINX_RESOLVER} 替换为运行时的环境变量后写入
+# /etc/nginx/conf.d/default.conf（只替换这两个变量，见 Dockerfile 的
+# NGINX_ENVSUBST_FILTER；否则 nginx 自带的 $host/$scheme 等会被误处理）。
+# 默认 BACKEND_HOST=backend、NGINX_RESOLVER=127.0.0.11（Docker 内嵌 DNS），
+# 云上单独 run 前端容器时用 -e BACKEND_HOST=<后端域名> 覆盖；
+# K8s 部署时把 NGINX_RESOLVER 设为 kube-dns 地址。
 server {
     listen 80;
     server_name _;
@@ -21,9 +24,16 @@ server {
     gzip_types text/css application/javascript application/json image/svg+xml;
     gzip_min_length 1024;
 
-    # 后端 API 反向代理。目标主机由 BACKEND_HOST 环境变量注入（默认 backend）。
+    # 容器 DNS：用变量 + resolver 做「请求时解析」，而不是启动时解析。
+    # 好处：1) 后端暂时不可达/尚未启动时 nginx 仍能启动（否则会因
+    # "host not found in upstream" 直接退出并反复重启）；
+    # 2) 后端容器重建换 IP 后自动重新解析（valid=10s），不会一直 502。
+    resolver ${NGINX_RESOLVER} valid=10s ipv6=off;
+    set $backend_upstream "http://${BACKEND_HOST}:8000";
+
+    # 后端 API 反向代理
     location /api/ {
-        proxy_pass http://${BACKEND_HOST}:8000;
+        proxy_pass $backend_upstream;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -38,6 +48,9 @@ server {
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         chunked_transfer_encoding on;
+
+        # 后端重启/短暂不可用时返回 502 而非挂起
+        proxy_connect_timeout 10s;
     }
 
     # SPA history 模式 fallback

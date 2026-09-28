@@ -32,12 +32,16 @@ FROM nginx:1.27-alpine
 
 # 用 envsubst 模板而非写死的 nginx.conf：后端主机名可在运行时注入。
 # 官方 nginx 入口脚本会把 /etc/nginx/templates/*.template 用环境变量替换后
-# 生成 /etc/nginx/conf.d/default.conf。默认 BACKEND_HOST=backend（compose 服务名）；
-# 云上单独 run 前端容器时用 -e BACKEND_HOST=<真实后端域名/IP> 覆盖。
-ENV BACKEND_HOST=backend
-# 只替换 BACKEND_HOST；否则 envsubst 会误处理 nginx 自己的变量（$host、$scheme、
-# $proxy_add_x_forwarded_for），导致生成的 nginx.conf 无效。
-ENV NGINX_ENVSUBST_TEMPLATE_VARS=BACKEND_HOST
+# 生成 /etc/nginx/conf.d/default.conf。
+#   BACKEND_HOST   ：后端主机名（默认 backend，即 compose 服务名）
+#   NGINX_RESOLVER ：容器 DNS（默认 127.0.0.11 = Docker 内嵌 DNS；K8s 设为
+#                    kube-dns 地址），用于「请求时解析」后端地址
+# 云上单独 run 前端容器时用 -e BACKEND_HOST=<后端域名> 覆盖。
+ENV BACKEND_HOST=backend \
+    NGINX_RESOLVER=127.0.0.11
+# 只允许替换这两个变量；否则 envsubst 会误处理 nginx 自带的变量
+# （$host、$scheme、$proxy_add_x_forwarded_for 等），生成的配置会失效。
+ENV NGINX_ENVSUBST_FILTER='^(BACKEND_HOST|NGINX_RESOLVER)$'
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
