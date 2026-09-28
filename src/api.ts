@@ -1,7 +1,43 @@
 // Backend API client for face management (SQLite-backed).
 
 import type { Alert, Camera, CameraAI, CameraModelRun, DashboardQueryResult, FaceData, FaceMeta, FaceValidation, Script, ScriptParam, ScriptRun } from './types'
-const BASE_URL: string = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
+
+// 构建时注入的后端地址：Docker/nginx 下为空字符串 → 走同源相对路径 /api/...
+const CONFIGURED_BASE: string | undefined = import.meta.env.VITE_API_BASE
+
+/**
+ * Backend base URL.
+ *
+ * - Docker/nginx build (``VITE_API_BASE=""``): same-origin relative paths.
+ * - Dev server (no ``VITE_API_BASE``): reuse the host the page was served from
+ *   with the backend port, so the UI keeps working when it is opened through
+ *   ``127.0.0.1`` or a LAN IP instead of the literal ``localhost``.
+ */
+function resolveBaseUrl(): string {
+  if (CONFIGURED_BASE !== undefined) return CONFIGURED_BASE
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    return `${window.location.protocol}//${window.location.hostname}:8000`
+  }
+  return 'http://localhost:8000'
+}
+
+const BASE_URL: string = resolveBaseUrl()
+
+/** Absolute backend base URL currently in use (shown in error messages). */
+export function apiBaseUrl(): string {
+  return BASE_URL || window.location.origin
+}
+
+/**
+ * Absolute URL for a backend-relative asset.
+ *
+ * Detection snapshots come back as ``/api/snapshots/<file>.jpg`` (the backend
+ * may also return an absolute S3/CDN URL); both must render in an ``<img>``.
+ */
+export function assetUrl(path: string | null | undefined): string {
+  if (!path) return ''
+  return /^https?:\/\//i.test(path) ? path : `${BASE_URL}${path}`
+}
 
 // Dashboard analytics (see /api/dashboard on the backend). The dashboard *list* is
 // frontend-owned (DashboardView.vue) so the sidebar renders even when the API is down;
@@ -352,6 +388,21 @@ export async function stopScript(id: string, camera?: string): Promise<ScriptRun
   return handle<ScriptRun>(res)
 }
 
+/**
+ * Lightweight live run state for one AI model on one camera.
+ *
+ * The engine is the source of truth, so polling this keeps a long-running
+ * preview honest: it stays "running" while the worker lives, and flips to
+ * "stopped" the moment the worker exits (offline camera, model not ready).
+ */
+export async function getScriptStatus(id: string, camera?: string): Promise<ScriptRun> {
+  const q = new URLSearchParams()
+  if (camera) q.set('camera', camera)
+  const qs = q.toString()
+  const res = await fetch(`${BASE_URL}/api/scripts/${encodeURIComponent(id)}/status${qs ? `?${qs}` : ''}`)
+  return handle<ScriptRun>(res)
+}
+
 // ---------------------------------------------------------------------------
 // Per-camera run control (each camera of an AI model runs/stops on its own)
 // ---------------------------------------------------------------------------
@@ -408,6 +459,31 @@ export async function stopAllScripts(): Promise<void> {
 
 export async function listAlerts(): Promise<Alert[]> {
   const res = await fetch(`${BASE_URL}/api/alerts`)
+  return handle<Alert[]>(res)
+}
+
+/**
+ * Durable detection history for one AI model, camera, and UTC time window.
+ *
+ * The unfiltered ``/api/alerts`` call returns the newest rows of *every* model,
+ * which cannot back the History dialog's per-script date filter.
+ */
+export async function listHistoryEvents(filters: {
+  scriptId?: string
+  cameraId?: string
+  /** Inclusive UTC ISO bound. */
+  start?: string
+  /** Exclusive UTC ISO bound. */
+  end?: string
+  limit?: number
+} = {}): Promise<Alert[]> {
+  const q = new URLSearchParams()
+  if (filters.scriptId) q.set('script_id', filters.scriptId)
+  if (filters.cameraId && filters.cameraId !== 'all') q.set('camera_id', filters.cameraId)
+  if (filters.start) q.set('start', filters.start)
+  if (filters.end) q.set('end', filters.end)
+  if (filters.limit) q.set('limit', String(filters.limit))
+  const res = await fetch(`${BASE_URL}/api/alerts?${q.toString()}`)
   return handle<Alert[]>(res)
 }
 
@@ -568,6 +644,62 @@ export function gateReportExportUrl(filters: {
   if (filters.granularity) q.set('granularity', filters.granularity)
   const qs = q.toString()
   return `${BASE_URL}/api/gates/export${qs ? `?${qs}` : ''}`
+}
+
+/** One count line's live counters (in/out follow the drawn arrow). */
+export interface GateLiveLine {
+  gate_id: string
+  location: string
+  arrow_sign: 1 | -1
+  in: number
+  out: number
+  net: number
+  person_in: number
+  person_out: number
+  day_in: number
+  day_out: number
+}
+
+export interface GateLiveTotals {
+  in: number
+  out: number
+  net: number
+  person_in: number
+  person_out: number
+}
+
+/** Cumulative people seen inside the ROI (now / session / day / all-time). */
+export interface GateRoiPeople {
+  now: number
+  session: number
+  day: number
+  total: number
+}
+
+/** Live people-counting readout for the preview panel. */
+export interface GateLiveInfo {
+  camera_id: string
+  script_id: string | null
+  running: boolean
+  mode: string
+  roi_configured: boolean
+  /** People detected inside the drawn ROI on the worker's latest frame. */
+  people_in_roi: number
+  detections: number
+  run_id: string | null
+  updated_at: string | null
+  /** Cumulative ROI people count, backed by the durable presence facts. */
+  roi_people: GateRoiPeople
+  session: GateLiveTotals
+  day: GateLiveTotals & { start: string; end: string }
+  lines: GateLiveLine[]
+}
+
+export async function getGateLive(cameraId: string, scriptId?: string): Promise<GateLiveInfo> {
+  const q = new URLSearchParams({ camera_id: cameraId })
+  if (scriptId) q.set('script_id', scriptId)
+  const res = await fetch(`${BASE_URL}/api/gates/live?${q.toString()}`)
+  return handle<GateLiveInfo>(res)
 }
 
 // ---------------------------------------------------------------------------

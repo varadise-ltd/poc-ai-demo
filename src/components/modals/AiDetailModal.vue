@@ -477,7 +477,7 @@ function toggleLineDrawing(): void {
   if (lineDrawing.value) {
     roiDrawing.value = false
     currentPoints.value = []
-    roiStatus.value = 'Count line mode ON — click two points on the frame to draw the line. The arrow points at the IN side; use ⇄ Flip to reverse.'
+    roiStatus.value = 'Count line mode ON — click two points on the frame to draw the line. The arrow crosses the line: moving ALONG the arrow (OUT → IN) counts as IN, against it counts as OUT. Use ⇄ Flip to reverse.'
   } else {
     roiStatus.value = 'Count line mode OFF.'
   }
@@ -527,16 +527,23 @@ function arrowVector(line: GateLineLocal): { nx: number; ny: number; mx: number;
   return { nx, ny, mx: (line.start[0] + line.end[0]) / 2, my: (line.start[1] + line.end[1]) / 2 }
 }
 
-function arrowTip(line: GateLineLocal): [number, number] {
-  const { nx, ny, mx, my } = arrowVector(line)
-  const len = Math.max(28, Math.hypot(line.end[0] - line.start[0], line.end[1] - line.start[1]) * 0.22)
-  return [mx + nx * len, my + ny * len]
+/** 箭头长度（像素）：随线长缩放，保证短线上也清晰可见。 */
+function arrowLength(line: GateLineLocal): number {
+  return Math.max(44, Math.hypot(line.end[0] - line.start[0], line.end[1] - line.start[1]) * 0.3)
 }
 
+/** 箭头尖端：位于 IN 侧（沿箭头穿越 = IN）。 */
+function arrowTip(line: GateLineLocal): [number, number] {
+  const { nx, ny, mx, my } = arrowVector(line)
+  const len = arrowLength(line)
+  return [mx + nx * len * 0.6, my + ny * len * 0.6]
+}
+
+/** 箭头尾部：位于 OUT 侧，使箭头横穿计数线（OUT → IN 即通行方向）。 */
 function arrowTail(line: GateLineLocal): [number, number] {
   const { nx, ny, mx, my } = arrowVector(line)
-  const len = Math.max(28, Math.hypot(line.end[0] - line.start[0], line.end[1] - line.start[1]) * 0.22)
-  return [mx + nx * len * 0.35, my + ny * len * 0.35]
+  const len = arrowLength(line)
+  return [mx - nx * len * 0.4, my - ny * len * 0.4]
 }
 
 function flipGateLine(index: number): void {
@@ -918,7 +925,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="roi-hint">
               <template v-if="lineDrawing">
-                ↔️ Count line mode — click two points to draw the line · drag endpoints to adjust · ⇄ Flip reverses the IN/OUT arrow · 💾 Save Lines persists to backend &amp; database · the arrow always points toward the IN side
+                ↔️ Count line mode — click two points to draw the line · the arrow crosses the line: crossing ALONG the arrow = <strong>IN</strong>, against the arrow = <strong>OUT</strong> · drag endpoints to adjust · ⇄ Flip reverses the direction · 💾 Save Lines persists to backend &amp; database (the counting algorithm uses the same arrow direction)
               </template>
               <template v-else-if="roiDrawing">
                 ✏️ Drawing mode — click to add points · double-click to finish each ROI · double-click an existing ROI edge to add a point · click a point to select it · right-click to delete the selected point · then 💾 Save ROI
@@ -937,15 +944,19 @@ onBeforeUnmount(() => {
               @contextmenu="onCanvasContextMenu"
               @mousedown="onCanvasMouseDown"
             >
-              <img
-                ref="roiImage"
-                :src="roiFrameUrl"
-                class="roi-frame"
-                alt="ROI frame"
-                draggable="false"
-                @load="onFrameLoad"
-              />
-              <svg class="roi-overlay" :viewBox="`0 0 ${roiNaturalW} ${roiNaturalH}`">
+              <div
+                class="roi-frame-stage"
+                :style="{ aspectRatio: `${roiNaturalW} / ${roiNaturalH}` }"
+              >
+                <img
+                  ref="roiImage"
+                  :src="roiFrameUrl"
+                  class="roi-frame"
+                  alt="ROI frame"
+                  draggable="false"
+                  @load="onFrameLoad"
+                />
+                <svg class="roi-overlay" :viewBox="`0 0 ${roiNaturalW} ${roiNaturalH}`">
                 <defs>
                   <marker id="gate-arrow-head" viewBox="0 0 10 10" refX="8" refY="5"
                           markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -959,14 +970,25 @@ onBeforeUnmount(() => {
                     :x2="line.end[0]" :y2="line.end[1]"
                     class="gate-line"
                   />
+                  <!-- 箭头横穿计数线：尾在 OUT 侧 → 尖在 IN 侧；顺箭头穿越 = IN，逆箭头 = OUT -->
                   <line
                     :x1="arrowTail(line)[0]" :y1="arrowTail(line)[1]"
                     :x2="arrowTip(line)[0]" :y2="arrowTip(line)[1]"
                     class="gate-arrow"
                     marker-end="url(#gate-arrow-head)"
                   />
-                  <text :x="arrowTip(line)[0]" :y="arrowTip(line)[1] - 10" class="gate-arrow-label">
-                    IN → {{ line.location || line.gateId }}
+                  <text :x="arrowTip(line)[0] + 8" :y="arrowTip(line)[1] + 6" class="gate-arrow-label in">
+                    IN
+                  </text>
+                  <text :x="arrowTail(line)[0] + 8" :y="arrowTail(line)[1] - 6" class="gate-arrow-label out">
+                    OUT
+                  </text>
+                  <text
+                    :x="(line.start[0] + line.end[0]) / 2 + 10"
+                    :y="(line.start[1] + line.end[1]) / 2 - 10"
+                    class="gate-arrow-label name"
+                  >
+                    {{ line.location || line.gateId }}
                   </text>
                   <circle
                     :cx="line.start[0]" :cy="line.start[1]" r="8"
@@ -1032,7 +1054,8 @@ onBeforeUnmount(() => {
                   @click.stop="selectPoint(-1, i)"
                   @contextmenu.prevent.stop="onPointContextMenu($event, -1, i)"
                 />
-              </svg>
+                </svg>
+              </div>
 
               <div
                 v-if="pointMenu"

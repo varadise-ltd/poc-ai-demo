@@ -42,6 +42,11 @@ export interface EventItem {
   meta: string
   confidence: string
   ok: boolean
+  /**
+   * Detection snapshot stored by the backend (local path route or S3 URL).
+   * Rendered in Result detail; empty when the event had no evidence picture.
+   */
+  imageUrl?: string
 }
 
 export interface HistoryEvent extends EventItem {
@@ -132,6 +137,8 @@ export interface Alert {
   event_type?: string | null
   mode?: string
   received_time?: string | null
+  /** AI model id behind `script` (a display name). */
+  script_id?: string | null
 }
 
 // Per-camera AI model instance (index framework: cameraAI)

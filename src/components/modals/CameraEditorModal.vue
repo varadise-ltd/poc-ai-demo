@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { probeCamera, type CameraProbeResult } from '../../api'
+import { apiBaseUrl, probeCamera, type CameraProbeResult } from '../../api'
 import { addCameraRecord, store, updateCameraRecord } from '../../store'
 
 const isAddMode = computed(() => store.cameraEditorMode === 'add')
@@ -94,7 +94,12 @@ async function validateStream(): Promise<boolean> {
     rtmpError.value = ''
     return true
   } catch (err) {
-    rtmpError.value = err instanceof Error ? err.message : String(err)
+    // A network failure (backend down / unreachable host) is not a stream
+    // problem, so say so instead of leaving the user thinking the URL failed
+    // video validation.
+    rtmpError.value = err instanceof TypeError
+      ? `Cannot reach the backend at ${apiBaseUrl()} — start the service, then click Check stream again. The stream URL was not validated.`
+      : err instanceof Error ? err.message : String(err)
     return false
   } finally {
     checking.value = false

@@ -397,6 +397,14 @@ h3 {
   min-width: 220px;
 }
 
+/* 下拉为空时的说明文字（例如该摄像机没有已启用的 AI model） */
+.field-hint {
+  color: var(--red);
+  font-size: 11px;
+  max-width: 260px;
+  line-height: 1.4;
+}
+
 label {
   color: var(--muted);
   font-weight: 650;
@@ -547,8 +555,8 @@ input[type='range'].param-range::-moz-range-thumb {
   transform-origin: center bottom;
 }
 
-.video::after {
-  content: 'SITE ENTRANCE CAMERA  •  1920 × 1080';
+/* 画面左下角的真实摄像机标识（原先为写死的装饰文字，会显示错误的摄像机名） */
+.video-caption {
   position: absolute;
   left: 18px;
   bottom: 15px;
@@ -802,6 +810,112 @@ input[type='range'].param-range::-moz-range-thumb {
   font-weight: 750;
   margin-top: 6px;
   color: var(--navy);
+}
+
+/* People counting live panel (preview): ROI people + IN/OUT per count line */
+.gate-live {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfd;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.gate-live-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.gate-live-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  color: #8a5a00;
+  background: #fff3d6;
+  border: 1px solid #f0d69b;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.gate-live-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.gate-live-stat {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gate-live-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gate-live-value {
+  font-size: 22px;
+  font-weight: 750;
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+}
+
+.gate-live-value.in {
+  color: #1f9d4d;
+}
+
+.gate-live-value.out {
+  color: #cc4444;
+}
+
+.gate-live-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.gate-live-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+
+.gate-live-line-name {
+  font-weight: 650;
+  color: var(--navy);
+  font-size: 13px;
+}
+
+.gate-live-line-dir {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gate-live-line-dir .in {
+  color: #1f9d4d;
+}
+
+.gate-live-line-dir .out {
+  color: #cc4444;
 }
 
 .event {
@@ -1453,16 +1567,30 @@ body:has(.detail-modal.show) {
   border-radius: 9px;
   overflow: hidden;
   background: #0e202d;
+  width: 100%;
   min-height: 210px;
+  padding: 16px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+.roi-frame-stage {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  max-height: min(62vh, 520px);
+  margin: 0 auto;
+  overflow: hidden;
+  background: #07131c;
+}
+
 .roi-frame {
   display: block;
   width: 100%;
-  max-width: 100%;
+  height: 100%;
+  object-fit: contain;
   cursor: crosshair;
   user-select: none;
 }
@@ -1547,6 +1675,19 @@ body:has(.detail-modal.show) {
   stroke: rgba(4, 14, 22, 0.85);
   stroke-width: 4;
   vector-effect: non-scaling-stroke;
+}
+
+.gate-arrow-label.in {
+  fill: #2ee06e;
+}
+
+.gate-arrow-label.out {
+  fill: #ff6b6b;
+}
+
+.gate-arrow-label.name {
+  fill: #ffc800;
+  font-size: 13px;
 }
 
 .roi-point.gate-endpoint {

@@ -108,14 +108,24 @@ export const selectedScript = computed<Script>(
   () => store.scripts.find((s) => s.id === store.selectedScriptId) ?? store.scripts[0],
 )
 
+/**
+ * Whether an event belongs to the given AI model.
+ *
+ * The catalog exposes display names while durable `events` rows carry the AI
+ * model id, so both are accepted; otherwise a stored event could never match.
+ */
+function eventMatchesScript(event: EventItem, script: Script): boolean {
+  return event.script === script.name || event.script === script.id
+}
+
 export const visibleEvents = computed<EventItem[]>(() => {
   const script = selectedScript.value
-  return store.events.filter((e) => e.script === script.name && e.camera === store.selectedCamera)
+  return store.events.filter((e) => eventMatchesScript(e, script) && e.camera === store.selectedCamera)
 })
 
 export const liveEvents = computed<EventItem[]>(() => {
   const script = selectedScript.value
-  return store.detectionEvents.filter((e) => e.script === script.name && e.camera === store.selectedCamera)
+  return store.detectionEvents.filter((e) => eventMatchesScript(e, script) && e.camera === store.selectedCamera)
 })
 
 export const cameraList = computed<string[]>(() => Object.keys(store.cameraInputs))
@@ -209,6 +219,24 @@ export async function stopSelectedScript(): Promise<void> {
   }
 }
 
+/**
+ * Re-read the live run state of the selected AI model / camera.
+ *
+ * Used by the preview poll so a worker that exits on its own is reflected in
+ * the UI (instead of a frozen "running" preview), while a healthy worker keeps
+ * reporting "running" for as long as the user leaves it on.
+ */
+export async function refreshSelectedScriptRun(): Promise<void> {
+  if (!store.selectedScriptId) return
+  try {
+    const run = await api.getScriptStatus(store.selectedScriptId, store.selectedCamera)
+    store.scriptRuns[store.selectedScriptId] = { status: run.status, camera: run.camera }
+    store.running = run.status === 'running'
+  } catch {
+    // Transient poll failure: keep the last known state.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Per-camera run control (AI model page)
 // ---------------------------------------------------------------------------
@@ -288,16 +316,43 @@ function syncScriptRunFromCameras(scriptId: string): void {
   }
 }
 
+/**
+ * Render an event timestamp as a local wall-clock time.
+ *
+ * Backends have written both ISO (`...T02:43:11+00:00`) and spaced
+ * (`2026-01-01 00:00:00`) forms, so parse when possible and otherwise show the
+ * raw value rather than dropping it.
+ */
+function formatEventTime(value: string | undefined): string {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value.split(' ')[1] ?? value
+  }
+  return parsed.toLocaleTimeString([], { hour12: false })
+}
+
+/** Local calendar date; must match `formatEventTime`'s local rendering. */
+function formatEventDate(value: string | undefined): string {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value.slice(0, 10)
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  return `${parsed.getFullYear()}-${month}-${day}`
+}
+
 function alertToEvent(a: Alert): EventItem {
   const ok = a.severity === 'Info'
   return {
-    time: (a.timestamp || '').split(' ')[1] ?? a.timestamp,
+    time: formatEventTime(a.timestamp),
     camera: a.camera ?? '',
     script: a.script,
     name: a.message,
     meta: a.camera ?? '',
     confidence: a.confidence ?? '',
     ok,
+    imageUrl: a.image_url ?? '',
   }
 }
 
@@ -307,6 +362,31 @@ export async function loadDetectionEvents(): Promise<void> {
     store.detectionEvents = alerts.map(alertToEvent)
   } catch {
     // 忽略轮询错误，保留旧数据
+  }
+}
+
+/**
+ * Load the durable detection history of one AI model from the backend.
+ *
+ * The History dialog used to render frontend-owned seed rows, so its Result
+ * detail could never show a real snapshot. The durable ``events`` rows carry
+ * the stored snapshot URL (``payload.extra.image_url``) and are filtered
+ * server-side by script, camera, and UTC window.
+ */
+export async function loadHistoryEvents(filters: {
+  scriptId?: string
+  cameraId?: string
+  start?: string
+  end?: string
+} = {}): Promise<void> {
+  try {
+    const alerts = await api.listHistoryEvents({ ...filters, limit: 500 })
+    store.historyEvents = alerts.map((alert) => ({
+      ...alertToEvent(alert),
+      date: formatEventDate(alert.timestamp),
+    }))
+  } catch {
+    // Backend unreachable: keep the rows already displayed.
   }
 }
 
