@@ -147,6 +147,7 @@ async function loadFrame(): Promise<void> {
   roiLoading.value = true
   roiDrawing.value = false
   currentPoints.value = []
+  console.log(`[ROI] loadFrame script=${store.aiDetailScriptId} camera=${cameraName.value}`)
   try {
     roiFrameKey.value += 1
     await loadRoiForSelection()
@@ -602,6 +603,7 @@ async function saveGateLines(): Promise<void> {
   gateSaving.value = true
   try {
     const savedLines: GateLineLocal[] = []
+    console.log(`[ROI] saveGateLines camera=${cameraName.value} lines=${gateLines.value.length}`)
     for (const line of gateLines.value) {
       const gate = await saveGateConfig({
         camera_id: cameraName.value,
@@ -718,6 +720,7 @@ async function saveRoiLocal(): Promise<void> {
   roiSaving.value = true
   try {
     const polygons = roiPolygons.value.map((p) => p.points)
+    console.log(`[ROI] saveRoi script=${store.aiDetailScriptId} camera=${cameraName.value} polygons=${polygons.length}`)
     const saved = await apiSaveRoi(store.aiDetailScriptId, cameraName.value, polygons)
     roiPolygons.value = saved.rois.map((r) => ({ id: r.id ?? null, points: r.points }))
     roiDrawing.value = false

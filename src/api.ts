@@ -109,7 +109,17 @@ export async function getFaceMeta(): Promise<FaceMeta> {
   return handle<FaceMeta>(res)
 }
 
+/**
+ * 遮蔽 URL 中的密码（rtsp://user:pass@host/… -> rtsp://user:***@host/…），
+ * 供前端 console 日志使用，避免把摄像机凭据打进浏览器控制台。
+ */
+function redactUrl(url: string): string {
+  return url.replace(/(\/\/[^/@:]+):([^@]*)@/g, '$1:***@')
+}
+
 async function handle<T>(res: Response): Promise<T> {
+  // 统一记录每一次后端 API 请求的响应状态，便于在浏览器控制台排障
+  console.log(`[api] ${res.status} ${redactUrl(res.url)}`)
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -118,6 +128,7 @@ async function handle<T>(res: Response): Promise<T> {
     } catch {
       /* ignore parse errors */
     }
+    console.error(`[api] request failed: ${res.status} ${redactUrl(res.url)} — ${detail}`)
     throw new Error(String(detail))
   }
   return res.json() as Promise<T>
@@ -208,6 +219,7 @@ export async function createCamera(
   organization?: string,
   org_admin?: string,
 ): Promise<Camera> {
+  console.log(`[api] createCamera name=${name} status=${status} rtmp=${redactUrl(rtmp)}`)
   const res = await fetch(`${BASE_URL}/api/cameras`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -228,6 +240,7 @@ export async function updateCamera(
     org_admin?: string
   },
 ): Promise<Camera> {
+  console.log(`[api] updateCamera id=${id} fields=${JSON.stringify({ ...fields, rtmp: fields.rtmp ? redactUrl(fields.rtmp) : undefined })}`)
   const res = await fetch(`${BASE_URL}/api/cameras/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -252,6 +265,7 @@ export interface CameraProbeResult {
 }
 
 export async function probeCamera(url: string): Promise<CameraProbeResult> {
+  console.log(`[api] probeCamera url=${redactUrl(url)}`)
   const res = await fetch(`${BASE_URL}/api/cameras/probe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -527,6 +541,7 @@ export async function saveRoi(
   camera: string,
   polygons: [number, number][][],
 ): Promise<RoiInfo> {
+  console.log(`[api] saveRoi script=${scriptId} camera=${camera} polygons=${polygons.length}`)
   const res = await fetch(`${BASE_URL}/api/roi`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -541,6 +556,7 @@ export async function saveRoi(
 }
 
 export async function clearRoi(scriptId: string, camera: string): Promise<void> {
+  console.log(`[api] clearRoi script=${scriptId} camera=${camera}`)
   const q = new URLSearchParams({ camera })
   const res = await fetch(`${BASE_URL}/api/roi/${scriptId}?${q.toString()}`, { method: 'DELETE' })
   await handle(res)
@@ -592,6 +608,7 @@ export async function saveGateConfig(gate: {
   enabled?: boolean
   arrow_sign?: 1 | -1
 }): Promise<GateConfigInfo> {
+  console.log(`[api] saveGateConfig camera=${gate.camera_id} gate=${gate.gate_id} location=${gate.location}`)
   const res = await fetch(`${BASE_URL}/api/gates/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -602,6 +619,7 @@ export async function saveGateConfig(gate: {
 }
 
 export async function deleteGateConfig(cameraId: string, gateId: string): Promise<void> {
+  console.log(`[api] deleteGateConfig camera=${cameraId} gate=${gateId}`)
   const res = await fetch(
     `${BASE_URL}/api/gates/config/${encodeURIComponent(cameraId)}/${encodeURIComponent(gateId)}`,
     { method: 'DELETE' },

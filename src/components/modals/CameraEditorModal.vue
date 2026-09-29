@@ -84,9 +84,11 @@ async function validateStream(): Promise<boolean> {
   checking.value = true
   rtmpProbe.value = null
   rtmpError.value = ''
+  console.log('[Camera] check stream (probe) requested')
   try {
     const res = await probeCamera(rtmp.value.trim())
     rtmpProbe.value = res
+    console.log(`[Camera] check stream result: valid=${res.valid} reachable=${res.reachable} stream_ok=${res.stream_ok} ${res.width ? `${res.width}x${res.height}` : ''}`)
     if (!res.stream_ok) {
       rtmpError.value = res.message || 'Stream is not a valid video stream.'
       return false
@@ -94,6 +96,7 @@ async function validateStream(): Promise<boolean> {
     rtmpError.value = ''
     return true
   } catch (err) {
+    console.error('[Camera] check stream failed', err)
     // A network failure (backend down / unreachable host) is not a stream
     // problem, so say so instead of leaving the user thinking the URL failed
     // video validation.
@@ -135,6 +138,7 @@ async function save(): Promise<void> {
 
   saving.value = true
   try {
+    console.log(`[Camera] save camera name=${trimmed} mode=${isAddMode.value ? 'add' : 'edit'}`)
     if (isAddMode.value) {
       await addCameraRecord(
         trimmed,
@@ -157,6 +161,7 @@ async function save(): Promise<void> {
     }
     store.showCameraEditor = false
   } catch (err) {
+    console.error('[Camera] save camera failed', err)
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
     saving.value = false
