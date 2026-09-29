@@ -33,15 +33,31 @@ FROM nginx:1.27-alpine
 # 用 envsubst 模板而非写死的 nginx.conf：后端主机名可在运行时注入。
 # 官方 nginx 入口脚本会把 /etc/nginx/templates/*.template 用环境变量替换后
 # 生成 /etc/nginx/conf.d/default.conf。
-#   BACKEND_HOST   ：后端主机名（默认 backend，即 compose 服务名）
-#   NGINX_RESOLVER ：容器 DNS（默认 127.0.0.11 = Docker 内嵌 DNS；K8s 设为
-#                    kube-dns 地址），用于「请求时解析」后端地址
+#   BACKEND_HOST          ：后端主机名（默认 backend，即 compose 服务名；
+#                           K8s 下改成后端 Service 名）
+#   NGINX_LOCAL_RESOLVERS ：容器 DNS 地址，由入口脚本从 /etc/resolv.conf 自动读取
 # 云上单独 run 前端容器时用 -e BACKEND_HOST=<后端域名> 覆盖。
-ENV BACKEND_HOST=backend \
-    NGINX_RESOLVER=127.0.0.11
-# 只允许替换这两个变量；否则 envsubst 会误处理 nginx 自带的变量
+ENV BACKEND_HOST=backend
+
+# 容器 DNS 自动探测（关键）：
+#   入口脚本 15-local-resolvers.envsh 会把 /etc/resolv.conf 里的 nameserver
+#   导出为 NGINX_LOCAL_RESOLVERS，供 envsubst 写入 resolver 指令。
+#   这样同一个镜像在两种环境都能解析后端服务名：
+#     - Docker Compose（用户自定义网络）-> 127.0.0.11（Docker 内嵌 DNS）
+#     - Kubernetes -> 集群 DNS（如 10.96.0.10 / kube-dns），**不是** 127.0.0.11
+#   之前写死 127.0.0.11 在 K8s 上会导致：
+#     recv() failed (111: Connection refused) while resolving, resolver: 127.0.0.11:53
+#     backend could not be resolved (110: Operation timed out) -> 全部 /api 请求 502
+# 若需强制指定 DNS（极少需要），把 NGINX_ENTRYPOINT_LOCAL_RESOLVERS 设为**空值**
+# 以关闭自动探测，并自行提供 NGINX_LOCAL_RESOLVERS：
+#   -e NGINX_ENTRYPOINT_LOCAL_RESOLVERS= -e NGINX_LOCAL_RESOLVERS=10.96.0.10
+# 注意：该入口脚本以「变量非空」作为开关，设成 "0" 并不会关闭它。
+ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
+    NGINX_LOCAL_RESOLVERS=127.0.0.11
+
+# 只允许替换这几个变量；否则 envsubst 会误处理 nginx 自带的变量
 # （$host、$scheme、$proxy_add_x_forwarded_for 等），生成的配置会失效。
-ENV NGINX_ENVSUBST_FILTER='^(BACKEND_HOST|NGINX_RESOLVER)$'
+ENV NGINX_ENVSUBST_FILTER='^(BACKEND_HOST|NGINX_LOCAL_RESOLVERS)$'
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
