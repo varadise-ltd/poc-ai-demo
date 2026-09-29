@@ -68,6 +68,15 @@ ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
 # 只允许替换这几个变量；否则 envsubst 会误处理 nginx 自带的变量
 # （$host、$scheme、$proxy_add_x_forwarded_for 等），生成的配置会失效。
 ENV NGINX_ENVSUBST_FILTER='^(BACKEND_HOST|NGINX_LOCAL_RESOLVERS)$'
+
+# 入口脚本：在 envsubst 渲染模板前归一化 BACKEND_HOST。
+# 文件必须放在 /docker-entrypoint.d/ 且以 .envsh 结尾（入口脚本用 source 加载，
+# 导出的变量才能传给 20-envsubst-on-templates.sh）；前缀 05 早于 15/20 执行。
+# 作用：部署时若把端口写进 BACKEND_HOST（如 poc-ai-service:8000），模板会生成
+# "http://poc-ai-service:8000:8000"，nginx 仅**在请求时**报
+# "invalid port in upstream" 导致全部 /api 500，且 nginx -t 检测不出。
+COPY docker-entrypoint.d/ /docker-entrypoint.d/
+RUN chmod +x /docker-entrypoint.d/*.envsh
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
