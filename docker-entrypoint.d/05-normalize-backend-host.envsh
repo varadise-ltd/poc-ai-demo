@@ -11,8 +11,11 @@
 # 报错，且 `nginx -t` 检测不出来（值在 set 字符串里，运行时才解析）：
 #     [error] invalid port in upstream "poc-ai-service:8000:8000"
 #     -> 所有 /api 请求 500
-# 这里在 envsubst 渲染模板之前把误写的 scheme / 端口 / 路径剥掉，并打印醒目警告，
-# 让镜像对这类部署误配有韧性，而不是整个站点的 API 全挂。
+# 这里在 envsubst 渲染模板之前做两件事，并打印醒目警告，让镜像对这类部署误配
+# 有韧性，而不是整个站点的 API 全挂：
+#   a) 剥掉误写的 scheme / 端口 / 路径（否则 host:8000:8000 -> 请求时 500）；
+#   b) 短名补全 /etc/resolv.conf 的 search 网域（否则 host -> 502 Host not found）。
+# 注意：这是兜底，不是替代品——部署配置仍应直接写 FQDN。
 #
 # 注意：
 #   - 文件名必须以 .envsh 结尾：官方入口脚本对 *.envsh 用 `.` **source**（导出
@@ -41,13 +44,37 @@ if [ -n "${BACKEND_HOST:-}" ]; then
         *:*) backend_host_normalized="${backend_host_normalized%:*}" ;;
     esac
 
+    # 4) 短名补全 search 网域（这是 502 的成因，不是 500）。
+    #    nginx 的 resolver 发裸 DNS 查询，**不套用** /etc/resolv.conf 的 search
+    #    列表（glibc 会，所以 curl/getent 能通、nginx 却报 "Host not found"）。
+    #    这里照 glibc 的规则接上第一个 search 网域，让 K8s 里同 namespace 的
+    #    短 Service 名（poc-ai-service）变成可解析的 FQDN。
+    #    兜底提示：正规做法是在部署配置里直接写 FQDN。
+    case "$backend_host_normalized" in
+        "") : ;;
+        *.*) : ;;   # 已含点：FQDN 或 IP 字面量，不再补全
+        *)
+            backend_host_search=""
+            if [ -r /etc/resolv.conf ]; then
+                backend_host_search=$(
+                    awk '$1 == "search" { print $2; exit }
+                         $1 == "domain" { print $2; exit }' \
+                        /etc/resolv.conf 2>/dev/null
+                )
+            fi
+            if [ -n "$backend_host_search" ]; then
+                backend_host_normalized="${backend_host_normalized}.${backend_host_search}"
+            fi
+            ;;
+    esac
+
     if [ -z "$backend_host_normalized" ]; then
         echo "WARNING: BACKEND_HOST='${backend_host_original}' 归一化后为空，保留原值" >&2
     elif [ "$backend_host_normalized" != "$backend_host_original" ]; then
-        echo "WARNING: BACKEND_HOST='${backend_host_original}' 含 scheme/端口/路径，" \
-             "已归一化为 '${backend_host_normalized}'。" \
-             "模板会补 :8000，请把部署配置改成纯主机名（K8s 用 FQDN，如 " \
-             "poc-ai-service.<namespace>.svc.cluster.local）。" >&2
+        echo "WARNING: BACKEND_HOST='${backend_host_original}' 不是可用的上游主机名，" \
+             "已归一化为 '${backend_host_normalized}'。模板会补 :8000，且 nginx resolver" \
+             "不展开 search 网域；请在部署配置里直接写 FQDN" \
+             "（如 poc-ai-service.<namespace>.svc.cluster.local）。" >&2
         BACKEND_HOST="$backend_host_normalized"
         export BACKEND_HOST
     fi
