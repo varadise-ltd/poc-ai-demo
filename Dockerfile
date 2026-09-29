@@ -33,11 +33,18 @@ FROM nginx:1.27-alpine
 # 用 envsubst 模板而非写死的 nginx.conf：后端主机名可在运行时注入。
 # 官方 nginx 入口脚本会把 /etc/nginx/templates/*.template 用环境变量替换后
 # 生成 /etc/nginx/conf.d/default.conf。
-#   BACKEND_HOST          ：后端主机名（默认 backend，即 compose 服务名；
-#                           K8s 下改成后端 Service 名）
+#   BACKEND_HOST          ：后端主机名（nginx 反代 /api/ 的目标）。
+#     ★ 这里默认 = poc-ai-service：这是 K8s 里后端 Service 的真实名字，
+#       已从 devops-cosmos-helm-chart 的
+#       cosmos/poc-ai-service/values.yaml `fullnameOverride: "poc-ai-service"`
+#       确认。当前 helm chart 的 cosmos/poc-ai-demo/values.yaml 没有注入
+#       BACKEND_HOST，所以云上直接吃这个映像默认值——若这里写错（例如 backend，
+#       那是 docker-compose 的 service 名，K8s 里不存在），nginx 会报
+#       `backend could not be resolved (3: Host not found)`，所有 /api 502。
+#     - Docker Compose 本地：由 docker-compose.yml 显式覆盖为 backend（服务名）。
+#     - 其他环境如需不同名字：用 env BACKEND_HOST=… 覆盖即可。
 #   NGINX_LOCAL_RESOLVERS ：容器 DNS 地址，由入口脚本从 /etc/resolv.conf 自动读取
-# 云上单独 run 前端容器时用 -e BACKEND_HOST=<后端域名> 覆盖。
-ENV BACKEND_HOST=backend
+ENV BACKEND_HOST=poc-ai-service
 
 # 容器 DNS 自动探测（关键）：
 #   入口脚本 15-local-resolvers.envsh 会把 /etc/resolv.conf 里的 nameserver
