@@ -75,6 +75,12 @@ ENV NGINX_ENVSUBST_FILTER='^(BACKEND_HOST|NGINX_LOCAL_RESOLVERS)$'
 # 作用：部署时若把端口写进 BACKEND_HOST（如 poc-ai-service:8000），模板会生成
 # "http://poc-ai-service:8000:8000"，nginx 仅**在请求时**报
 # "invalid port in upstream" 导致全部 /api 500，且 nginx -t 检测不出。
+#
+# ★ 重要：docker-entrypoint.d/ 必须提交进 git。
+#   Jenkins/Kaniko 用 `--context <workspace>` 从 git checkout 取构建上下文，
+#   未提交的文件不在上下文里，COPY 会直接失败：
+#     failed to get fileinfo for .../docker-entrypoint.d: no such file or directory
+#   （0.1.0-alpha.10 构建失败即此原因）。新增 COPY 源文件后务必 git add 并推送。
 COPY docker-entrypoint.d/ /docker-entrypoint.d/
 RUN chmod +x /docker-entrypoint.d/*.envsh
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template

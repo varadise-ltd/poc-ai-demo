@@ -1,0 +1,54 @@
+#!/bin/sh
+# =============================================================================
+# 归一化 BACKEND_HOST —— 防止生成 "host:port:port" 这类非法 upstream
+# =============================================================================
+# 为什么需要：nginx.conf.template 里写的是
+#     set $backend_upstream "http://${BACKEND_HOST}:8000";
+# 端口由模板补齐，所以 BACKEND_HOST 只能是「主机名」，不能带端口。
+# 但 BACKEND_HOST 这个名字容易被理解成「后端地址」，部署时若写成
+#     BACKEND_HOST=poc-ai-service:8000
+# 生成的就是 http://poc-ai-service:8000:8000，nginx 会在**请求时**（不是启动时）
+# 报错，且 `nginx -t` 检测不出来（值在 set 字符串里，运行时才解析）：
+#     [error] invalid port in upstream "poc-ai-service:8000:8000"
+#     -> 所有 /api 请求 500
+# 这里在 envsubst 渲染模板之前把误写的 scheme / 端口 / 路径剥掉，并打印醒目警告，
+# 让镜像对这类部署误配有韧性，而不是整个站点的 API 全挂。
+#
+# 注意：
+#   - 文件名必须以 .envsh 结尾：官方入口脚本对 *.envsh 用 `.` **source**（导出
+#     的变量能传递给后续的 20-envsubst-on-templates.sh）；*.sh 是子进程执行，
+#     export 不会保留。
+#   - 前缀 05 保证在 15-local-resolvers.envsh / 20-envsubst 之前执行（入口脚本用
+#     `sort -V` 排序）。
+#   - 不用 set -e：本文件被 source，改父 shell 的行为会影响整个入口流程。
+#   - 不支持 IPv6 字面量（如 [::1]:8000）；本项目固定用 K8s Service DNS 名。
+# =============================================================================
+
+if [ -n "${BACKEND_HOST:-}" ]; then
+    backend_host_original="$BACKEND_HOST"
+    backend_host_normalized="$BACKEND_HOST"
+
+    # 1) 误写成完整 URL（http://host）时剥掉 scheme
+    case "$backend_host_normalized" in
+        *"://"*) backend_host_normalized="${backend_host_normalized#*://}" ;;
+    esac
+
+    # 2) 剥掉路径与尾随斜杠（proxy_pass 用不到路径，模板自己管 URI）
+    backend_host_normalized="${backend_host_normalized%%/*}"
+
+    # 3) 剥掉端口——端口由模板统一补 :8000
+    case "$backend_host_normalized" in
+        *:*) backend_host_normalized="${backend_host_normalized%:*}" ;;
+    esac
+
+    if [ -z "$backend_host_normalized" ]; then
+        echo "WARNING: BACKEND_HOST='${backend_host_original}' 归一化后为空，保留原值" >&2
+    elif [ "$backend_host_normalized" != "$backend_host_original" ]; then
+        echo "WARNING: BACKEND_HOST='${backend_host_original}' 含 scheme/端口/路径，" \
+             "已归一化为 '${backend_host_normalized}'。" \
+             "模板会补 :8000，请把部署配置改成纯主机名（K8s 用 FQDN，如 " \
+             "poc-ai-service.<namespace>.svc.cluster.local）。" >&2
+        BACKEND_HOST="$backend_host_normalized"
+        export BACKEND_HOST
+    fi
+fi
