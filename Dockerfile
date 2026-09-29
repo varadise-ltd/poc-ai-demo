@@ -34,17 +34,20 @@ FROM nginx:1.27-alpine
 # 官方 nginx 入口脚本会把 /etc/nginx/templates/*.template 用环境变量替换后
 # 生成 /etc/nginx/conf.d/default.conf。
 #   BACKEND_HOST          ：后端主机名（nginx 反代 /api/ 的目标）。
-#     ★ 这里默认 = poc-ai-service：这是 K8s 里后端 Service 的真实名字，
-#       已从 devops-cosmos-helm-chart 的
-#       cosmos/poc-ai-service/values.yaml `fullnameOverride: "poc-ai-service"`
-#       确认。当前 helm chart 的 cosmos/poc-ai-demo/values.yaml 没有注入
-#       BACKEND_HOST，所以云上直接吃这个映像默认值——若这里写错（例如 backend，
-#       那是 docker-compose 的 service 名，K8s 里不存在），nginx 会报
-#       `backend could not be resolved (3: Host not found)`，所有 /api 502。
-#     - Docker Compose 本地：由 docker-compose.yml 显式覆盖为 backend（服务名）。
-#     - 其他环境如需不同名字：用 env BACKEND_HOST=… 覆盖即可。
+#     ★ 必须用「全限定名 FQDN」，不能用短名！
+#       nginx 的 resolver 指令「不会」像 glibc 那样按 /etc/resolv.conf 的 search
+#       网域自动补全，它会把短名原封不动丢给 CoreDNS，CoreDNS 对裸名回 NXDOMAIN：
+#         poc-ai-service could not be resolved (3: Host not found) -> 全部 /api 502
+#       因此这里写完整：
+#         <Service名>.<namespace>.svc.cluster.local
+#       后端 Service 名 = poc-ai-service（fullnameOverride），dev namespace = cosmos，
+#       所以 = poc-ai-service.cosmos.svc.cluster.local。
+#     - Docker Compose 本地：由 docker-compose.yml 显式覆盖为 backend（Docker 内嵌
+#       DNS 会直接解析同网络下的短容器名，无需 FQDN）。
+#     - 其他环境（qa/prod 等不同 namespace）：务必用 env BACKEND_HOST 覆盖成该
+#       环境的 FQDN（例如 poc-ai-service.cosmos-qa.svc.cluster.local）。
 #   NGINX_LOCAL_RESOLVERS ：容器 DNS 地址，由入口脚本从 /etc/resolv.conf 自动读取
-ENV BACKEND_HOST=poc-ai-service
+ENV BACKEND_HOST=poc-ai-service.cosmos.svc.cluster.local
 
 # 容器 DNS 自动探测（关键）：
 #   入口脚本 15-local-resolvers.envsh 会把 /etc/resolv.conf 里的 nameserver
