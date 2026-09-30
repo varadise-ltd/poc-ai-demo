@@ -27,6 +27,15 @@ server {
     # 否则浏览器拿到旧 index.html 就永远加载旧 JS，新功能看似「没生效」。
     add_header Cache-Control "no-cache" always;
 
+    # 允许母站以 iframe 嵌入本前端（frame-ancestors 是 CSP 的等价物）。
+    # 必须与「平台层移除 X-Frame-Options: sameorigin」配套：
+    #   - 本容器只负责「声明允许谁嵌入」；
+    #   - 但 X-Frame-Options: sameorigin 由最外层 Ingress/WAF 加上，本静态容器
+    #     无法移除它。浏览器同时看到两者时会以更严格的 XFO 为准，仍拒绝跨源 iframe。
+    # 因此这里设 frame-ancestors 只是「正确的一半」，另一半是在 Ingress/WAF 层
+    # 移除 X-Frame-Options（见 .github/skills/.../operations.md 的 Troubleshooting）。
+    add_header Content-Security-Policy "frame-ancestors https://cosmos.varadise.cloud" always;
+
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml;
     gzip_min_length 1024;

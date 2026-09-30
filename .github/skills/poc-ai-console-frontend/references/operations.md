@@ -113,6 +113,27 @@ The container healthcheck uses `http://127.0.0.1/`, **not** `localhost`: nginx l
 while `localhost` can resolve to `::1` first, which makes the probe fail with "Connection
 refused" even though the app serves fine.
 
+### Embedding the console in another site (iframe / `frame-ancestors`)
+
+To render this SPA inside `<iframe>` on the parent `https://cosmos.varadise.cloud`:
+
+1. **This image** sets `Content-Security-Policy: frame-ancestors https://cosmos.varadise.cloud`
+   in `nginx.conf.template` (the "allow who embeds me" half).
+2. **The platform must also remove `X-Frame-Options: sameorigin`** — that header is added by the
+   outermost Ingress/WAF, **not** by this repo. When both are present the browser honours the
+   stricter `X-Frame-Options` and still refuses the cross-origin frame.
+
+Verify the final response:
+
+```bash
+curl -sSI https://poc-aicctv-dev.varadise.cloud/ | grep -iE 'x-frame-options|content-security-policy'
+# want: Content-Security-Policy: frame-ancestors https://cosmos.varadise.cloud
+#       and NO X-Frame-Options: sameorigin
+```
+
+The parent `cosmos.varadise.cloud` needs **no** change: its CSP already carries
+`frame-src 'self' *`, so it permits embedding any origin.
+
 ## Build-Time vs Runtime Config
 
 `VITE_API_BASE` is inlined by Vite at **build** time. A built `dist/` cannot be repointed at a
@@ -132,6 +153,7 @@ needed, load the base URL from a runtime source (e.g. `window.__CONFIG__` or a g
 | Every `/api` call returns **500**, nginx log shows `invalid port in upstream "<namespace>-ai-service:8000:8000"` | Deployment set `BACKEND_HOST` **with** a port. The template appends `:8000` itself. Fix: set it to the bare Service FQDN (`poc-ai-service.<namespace>.svc.cluster.local`). Since the entrypoint normalizer landed, a stray port is stripped with a startup `WARNING`, but fix the deploy env too. Note `nginx -t` passes — the error only appears per request. |
 | Every `/api` call returns 502 and the log says `could not be resolved` / `host not found in upstream` | `BACKEND_HOST` is a short name (nginx `resolver` does not expand the `/etc/resolv.conf` search domain) or a wrong namespace. Use the full FQDN. |
 | `recv() failed (111: Connection refused) while resolving, resolver: 127.0.0.11:53` inside Kubernetes | Hardcoded Docker-only resolver. Leave `NGINX_ENTRYPOINT_LOCAL_RESOLVERS` untouched so the entrypoint derives the cluster DNS from `/etc/resolv.conf`. |
+| iframe shows blank / `Refused to display '...' in a frame because it set 'X-Frame-Options' to 'sameorigin'` | The outermost Ingress/WAF still sends `X-Frame-Options: sameorigin`. This image already sends `frame-ancestors https://cosmos.varadise.cloud`, but the browser honours the stricter XFO — remove X-Frame-Options at the Ingress/WAF layer (e.g. ingress-nginx `configuration-snippet` with `proxy_hide_header X-Frame-Options;`), not in this repo's `nginx.conf.template`. |
 | Upload returns `413` | `client_max_body_size` too small in `nginx.conf`. |
 | Frontend container `unhealthy` but the page loads | Healthcheck must target `127.0.0.1`, not `localhost`. |
 | Reports show 0 while the backend has data | The dashboard reads durable `events` / `passage_facts` and excludes synthetic MOCK rows. Check the time range and that a detection worker actually ran. |
