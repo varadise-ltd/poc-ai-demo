@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { getGateLive, listCameras, listScripts, snapshotUrl, streamUrl } from '../api'
-import type { GateLiveInfo } from '../api'
-import type { Camera, Script } from '../types'
+import { getFaceLive, getGateLive, listCameras, listScripts, snapshotUrl, streamUrl } from '../api'
+import type { FaceLiveInfo, GateLiveInfo } from '../api'
+import type { Camera, EventItem, Script } from '../types'
 import {
   clearEvents,
   liveEvents,
@@ -14,26 +14,18 @@ import {
   refreshSelectedScriptRun,
   selectedScript,
   selectedScriptRun,
-  startSelectedScript,
-  stopSelectedScript,
   store,
 } from '../store'
 import ResultDetailModal from './modals/ResultDetailModal.vue'
 import HistoryModal from './modals/HistoryModal.vue'
 
+// 后端 AI model 的真实运行状态：由 AI model 页的 Run/Stop 控制。
 const isRunning = computed(() => selectedScriptRun.value.status === 'running')
 
-// 预览没有自动停止：运行状态完全由用户控制（Preview / Stop Preview 按钮，或
-// AI model 页的 Run/Stop）。离开页面也不会停止 worker，回到本页时只要 worker
-// 仍在运行，预览与实时统计就会自动恢复显示。
-async function stopPreview(): Promise<void> {
-  stopPolling()
-  try {
-    await stopSelectedScript()
-  } catch (err) {
-    console.warn('stop preview failed', err)
-  }
-}
+// 预览显示开关（纯前端）：Preview / Stop Preview 只控制是否显示预览画面，
+// 与后端 AI model 是否 running 无关。后端 worker 只在 AI model 页手动 Stop
+// 才停止，否则一直保持 running。
+const previewing = ref(false)
 
 // ---------------------------------------------------------------------------
 // Organization filter (server-side via GET /api/cameras?organization=)
@@ -128,15 +120,12 @@ const selectedCameraLabel = computed(() => {
 let pollTimer: number | null = null
 
 async function togglePreview(): Promise<void> {
-  if (isRunning.value) {
-    await stopPreview()
-  } else {
-    try {
-      await startSelectedScript()
-      await loadPreviewHistory()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
-    }
+  // 仅切换预览显示，绝不启动/停止后端 AI model。后端 model 的运行状态
+  // 只在 AI model 页通过 Run/Stop 改变。停止中的 model 不可预览（按钮已禁用）。
+  if (!previewing.value && !isRunning.value) return
+  previewing.value = !previewing.value
+  if (previewing.value) {
+    await loadPreviewHistory()
   }
 }
 
@@ -165,6 +154,7 @@ async function pollTick(): Promise<void> {
   if (!isRunning.value) return
   void loadDetectionEvents()
   void loadGateLive()
+  void loadFaceLive()
   if (isCountingScript.value && !store.historyEvents.length) void loadPreviewHistory()
 }
 
@@ -181,6 +171,8 @@ function stopPolling(): void {
   }
   gateLive.value = null
   gateLiveError.value = ''
+  faceLive.value = null
+  faceLiveError.value = ''
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +184,26 @@ const gateLive = ref<GateLiveInfo | null>(null)
 const gateLiveError = ref('')
 const isCountingScript = computed(() => selectedScript.value?.isCounting === true)
 const roiPeopleLabel = computed(() => (gateLive.value?.roi_configured ? 'People in ROI (now)' : 'People (now, whole frame)'))
+
+// ---------------------------------------------------------------------------
+// 人脸识别实时读数（仿照 People Counting 展示）
+// ---------------------------------------------------------------------------
+const faceLive = ref<FaceLiveInfo | null>(null)
+const faceLiveError = ref('')
+const isFaceScript = computed(() => selectedScript.value?.isFace === true)
+
+async function loadFaceLive(): Promise<void> {
+  if (!isFaceScript.value || !isRunning.value || !store.selectedCamera) {
+    faceLive.value = null
+    return
+  }
+  try {
+    faceLive.value = await getFaceLive(store.selectedCamera, store.selectedScriptId)
+    faceLiveError.value = ''
+  } catch (err) {
+    faceLiveError.value = err instanceof Error ? err.message : String(err)
+  }
+}
 
 const intervalHistory = computed(() => {
   if (!isCountingScript.value) return []
@@ -217,6 +229,69 @@ const intervalHistory = computed(() => {
   }
   return [...buckets.values()].sort((a, b) => b.period.localeCompare(a.period))
 })
+
+// ---------------------------------------------------------------------------
+// 实时事件按固定时间窗聚合（非计数脚本）
+// ---------------------------------------------------------------------------
+// 非计数脚本（如人脸识别）原本每个检测事件一行、大约每分钟一条；这里按
+// LIVE_BUCKET_MINUTES 分钟一桶合并，减少列表行数，并在桶内汇总识别到的姓名。
+const LIVE_BUCKET_MINUTES = 5
+
+interface LiveEventBucket {
+  startMs: number
+  period: string
+  count: number
+  names: string[]
+  latest: EventItem | null
+}
+
+function extractDetectedName(eventName: string): string {
+  // 人脸告警消息形如 "<Name> detected" / "Unknown detected"；抽取出姓名。
+  const base = eventName.replace(/\s+detected\s*$/i, '').trim()
+  if (!base || /unknown/i.test(base)) return ''
+  return base
+}
+
+const liveEventBuckets = computed<LiveEventBucket[]>(() => {
+  const minutes = LIVE_BUCKET_MINUTES
+  const buckets = new Map<number, { count: number; names: Set<string>; latest: EventItem | null }>()
+  for (const e of liveEvents.value) {
+    const ts = e.timestamp
+    if (typeof ts !== 'number' || Number.isNaN(ts)) continue
+    const start = Math.floor(ts / (minutes * 60000)) * (minutes * 60000)
+    const bucket = buckets.get(start) ?? { count: 0, names: new Set<string>(), latest: null }
+    bucket.count += 1
+    if (!bucket.latest || ts > (bucket.latest.timestamp ?? 0)) bucket.latest = e
+    if (isFaceScript.value) {
+      const name = extractDetectedName(e.name)
+      if (name) bucket.names.add(name)
+    }
+    buckets.set(start, bucket)
+  }
+  return [...buckets.entries()]
+    .map(([startMs, b]) => ({
+      startMs,
+      period: new Date(startMs).toLocaleTimeString([], { hour12: false }),
+      count: b.count,
+      names: [...b.names],
+      latest: b.latest,
+    }))
+    .sort((a, b) => b.startMs - a.startMs)
+})
+
+function openBucket(bucket: LiveEventBucket): void {
+  if (!bucket.latest) return
+  store.selectedEvent = bucket.latest
+  store.showResultDetail = true
+}
+
+/** 渲染人脸识别结果的检测时刻（后端返回 UTC ISO 时间）。 */
+function formatDetectedAt(value: string | null | undefined): string {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleTimeString([], { hour12: false })
+}
 
 /**
  * People are being detected inside the ROI but no count line has ever been
@@ -250,8 +325,10 @@ async function loadGateLive(): Promise<void> {
 
 watch([() => store.selectedCamera, () => store.selectedScriptId], () => {
   gateLive.value = null
+  faceLive.value = null
   if (isRunning.value) {
     void loadGateLive()
+    void loadFaceLive()
     void loadPreviewHistory()
   }
 })
@@ -264,8 +341,12 @@ watch(() => store.selectedCamera, () => syncSelectedModel())
 watch(isRunning, (running) => {
   if (running) {
     void loadGateLive()
+    void loadFaceLive()
   } else {
     gateLive.value = null
+    faceLive.value = null
+    // 模型已停止：预览随之关闭（停止中的 model 不可预览）。
+    previewing.value = false
   }
 })
 
@@ -324,7 +405,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="page-head-meta">
         <span class="eyebrow">LIVE WORKSPACE</span>
-        <span class="page-head-meta-value">{{ isRunning ? 'Streaming now' : 'Ready to preview' }}</span>
+        <span class="page-head-meta-value">{{ previewing ? 'Streaming now' : 'Ready to preview' }}</span>
       </div>
     </div>
 
@@ -358,11 +439,16 @@ onBeforeUnmount(() => {
       <div class="stream-state">
         <button
           class="btn"
-          :class="isRunning ? 'dark' : 'primary'"
+          :class="previewing ? 'dark' : 'primary'"
+          :disabled="!isRunning"
+          :title="!isRunning ? 'This AI model is stopped — start it on the AI model page first' : ''"
           @click="togglePreview"
         >
-          {{ isRunning ? 'Stop Preview' : 'Preview' }}
+          {{ previewing ? 'Stop Preview' : 'Preview' }}
         </button>
+        <span v-if="!isRunning" class="field-hint">
+          This AI model is stopped — start it on the AI model page to preview.
+        </span>
       </div>
     </div>
 
@@ -373,28 +459,29 @@ onBeforeUnmount(() => {
             <strong>{{ selectedScript.name }}</strong> ·
             <strong>{{ store.selectedCamera }}</strong> output stream
           </span>
-          <span class="live-badge">{{ isRunning ? 'LIVE' : 'OFFLINE' }}</span>
+          <span class="live-badge">{{ previewing ? 'LIVE' : 'OFFLINE' }}</span>
         </div>
 
         <div class="video">
           <img
-            v-if="isRunning"
+            v-if="previewing"
             :src="currentStreamUrl"
             alt="Live detection stream"
             class="video-frame"
           />
           <div v-else class="video-placeholder">
-            <span>Click “Preview” to start the AI-detected stream.</span>
+            <span v-if="!isRunning">This AI model is stopped — start it on the AI model page, then click “Preview”.</span>
+            <span v-else>Click “Preview” to view the AI-detected stream.</span>
           </div>
           <span class="video-caption">{{ selectedCameraLabel }}</span>
         </div>
 
         <div class="video-foot">
-          <button class="btn" :disabled="!isRunning" @click="togglePause">
+          <button class="btn" :disabled="!previewing" @click="togglePause">
             {{ store.previewPaused ? 'Resume' : 'Pause' }}
           </button>
-          <button class="btn" :disabled="!isRunning" @click="snapshot">Snapshot</button>
-          <button class="btn" :disabled="!isRunning" @click="toggleLabels">
+          <button class="btn" :disabled="!previewing" @click="snapshot">Snapshot</button>
+          <button class="btn" :disabled="!previewing" @click="toggleLabels">
             {{ store.previewShowLabels ? 'Hide labels' : 'Show labels' }}
           </button>
           <button class="btn" @click="toggleFullscreen">⛶</button>
@@ -493,8 +580,52 @@ onBeforeUnmount(() => {
           <p v-else-if="gateLive && gateLive.running" class="subtitle">
             Waiting for the running worker to report its first frame…
           </p>          <p v-else class="subtitle">
-            {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — click “Preview” to
-            start it and watch the ROI people count and IN/OUT totals.
+            {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the
+            AI model page, then the ROI people count and IN/OUT totals will appear here.
+          </p>
+        </div>
+
+        <div v-if="isFaceScript" class="gate-live">
+          <div class="gate-live-head">
+            <strong>{{ selectedScript.name }} · face recognition</strong>
+            <span class="subtitle">
+              Cumulative session counts; recognized people deduplicated per 10-minute window
+            </span>
+            <span v-if="faceLive?.mode === 'MOCK'" class="gate-live-badge">DEMO</span>
+          </div>
+          <p v-if="faceLiveError" class="subtitle" style="color: var(--red)">{{ faceLiveError }}</p>
+          <template v-if="faceLive && faceLive.running">
+            <div class="gate-live-stats">
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Faces detected (this run)</span>
+                <strong class="gate-live-value">{{ faceLive.detections }}</strong>
+              </div>
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Recognized (this run)</span>
+                <strong class="gate-live-value in">{{ faceLive.recognized }}</strong>
+              </div>
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Unknown (this run)</span>
+                <strong class="gate-live-value out">{{ faceLive.unknown }}</strong>
+              </div>
+            </div>
+            <div v-if="faceLive.people.length" class="gate-live-lines">
+              <div v-for="p in faceLive.people" :key="p.name" class="gate-live-line">
+                <span class="gate-live-line-name">{{ p.name }}</span>
+                <span class="gate-live-line-dir">
+                  <span class="in">{{ (p.confidence * 100).toFixed(1) }}%</span>
+                  <span v-if="p.count" class="subtitle">×{{ p.count }}</span>
+                  <span v-if="p.last_seen_at" class="subtitle">{{ formatDetectedAt(p.last_seen_at) }}</span>
+                </span>
+              </div>
+            </div>
+            <p v-else class="subtitle">
+              No registered person is in view — unrecognized faces are not matched to any name.
+            </p>
+          </template>
+          <p v-else class="subtitle">
+            {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the
+            AI model page, then recognized names will appear here.
           </p>
         </div>
 
@@ -514,20 +645,29 @@ onBeforeUnmount(() => {
           <div v-else class="detail-empty">No counting history for the selected camera.</div>
         </div>
         <div v-else class="events-list">
-          <template v-if="liveEvents.length">
+          <template v-if="liveEventBuckets.length">
             <div
-              v-for="(e, i) in liveEvents"
-              :key="i"
+              v-for="bucket in liveEventBuckets"
+              :key="bucket.startMs"
               class="event"
-              @click="store.selectedEvent = e; store.showResultDetail = true"
+              @click="openBucket(bucket)"
             >
-              <span class="event-time">{{ e.time }}</span>
-              <span class="event-mark" :class="{ ok: e.ok }"></span>
+              <span class="event-time">{{ bucket.period }}</span>
+              <span class="event-mark ok"></span>
               <div>
-                <div class="event-name">{{ e.name }}</div>
-                <div class="event-meta"><strong>{{ e.camera }}</strong> · {{ e.meta }}</div>
+                <div class="event-name">
+                  {{ LIVE_BUCKET_MINUTES }}-minute summary · {{ bucket.count }} event{{ bucket.count === 1 ? '' : 's' }}
+                </div>
+                <div class="event-meta">
+                  <template v-if="isFaceScript && bucket.names.length">
+                    <strong>{{ bucket.names.join(', ') }}</strong>
+                  </template>
+                  <template v-else>
+                    <strong>{{ store.selectedCamera }}</strong> · {{ bucket.latest?.meta ?? '' }}
+                  </template>
+                </div>
               </div>
-              <span class="confidence">{{ e.confidence }}</span>
+              <span v-if="bucket.latest" class="confidence">{{ bucket.latest.confidence }}</span>
             </div>
           </template>
           <div v-else class="detail-empty">No results for the selected script and camera.</div>

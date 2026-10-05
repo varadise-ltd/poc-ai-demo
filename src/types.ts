@@ -32,10 +32,14 @@ export interface Script {
   deleted?: boolean
   /** Counting script (People Counting / gate): supports count lines with in/out arrows. */
   isCounting?: boolean
+  /** Face-recognition script: preview shows the recognized-person readout. */
+  isFace?: boolean
 }
 
 export interface EventItem {
   time: string
+  /** Epoch milliseconds; used to bucket events into fixed time windows. */
+  timestamp?: number
   camera: string
   script: string
   name: string

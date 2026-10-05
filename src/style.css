@@ -1965,6 +1965,53 @@ body:has(.detail-modal.show) {
   text-align: right;
 }
 
+/* 统计指标：每个指标占一行记录（label 左、数值右），与下方检测记录同构，
+   替代原先仅一列堆叠的展示。 */
+.dash-stats {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.dash-stat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.dash-stat:last-child {
+  border-bottom: 0;
+}
+
+.dash-stat:hover {
+  background: #fafbfc;
+}
+
+.dash-stat-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dash-stat-value {
+  font-size: 18px;
+  font-weight: 750;
+  color: var(--navy);
+  text-align: right;
+}
+
+.dash-stat.good .dash-stat-value {
+  color: var(--green);
+}
+
+.dash-stat.bad .dash-stat-value {
+  color: var(--red);
+}
+
 .dashboard-content .dash-stats,
 .dashboard-content .dashboard-records,
 .dashboard-content .dash-sec-head {

@@ -344,8 +344,10 @@ function formatEventDate(value: string | undefined): string {
 
 function alertToEvent(a: Alert): EventItem {
   const ok = a.severity === 'Info'
+  const ts = new Date(a.timestamp).getTime()
   return {
     time: formatEventTime(a.timestamp),
+    timestamp: Number.isNaN(ts) ? undefined : ts,
     camera: a.camera ?? '',
     script: a.script,
     name: a.message,

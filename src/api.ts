@@ -318,6 +318,7 @@ interface ScriptRecord {
   custom?: boolean
   deleted?: boolean
   is_counting?: boolean
+  is_face?: boolean
   run?: { status: 'running' | 'stopped'; camera?: string | null; pid?: number | null }
 }
 
@@ -345,6 +346,7 @@ function toScript(r: ScriptRecord): Script {
     custom: r.custom ?? false,
     deleted: r.deleted ?? false,
     isCounting: r.is_counting ?? false,
+    isFace: r.is_face ?? false,
     params,
   }
 }
@@ -718,6 +720,40 @@ export async function getGateLive(cameraId: string, scriptId?: string): Promise<
   if (scriptId) q.set('script_id', scriptId)
   const res = await fetch(`${BASE_URL}/api/gates/live?${q.toString()}`)
   return handle<GateLiveInfo>(res)
+}
+
+/** One recognized person, deduplicated by name within a 10-minute window. */
+export interface FaceLivePerson {
+  name: string
+  confidence: number
+  /** Number of times recognized within the current 10-minute window. */
+  count?: number
+  /** UTC ISO timestamp of the first recognition in this window. */
+  first_seen_at?: string
+  /** UTC ISO timestamp of the most recent recognition in this window. */
+  last_seen_at?: string
+  /** @deprecated superseded by last_seen_at; kept for older backends. */
+  detected_at?: string
+}
+
+/** Live face-recognition readout for the preview panel. */
+export interface FaceLiveInfo {
+  camera_id: string
+  script_id: string | null
+  running: boolean
+  mode: string
+  updated_at: string | null
+  detections: number
+  recognized: number
+  unknown: number
+  people: FaceLivePerson[]
+}
+
+export async function getFaceLive(cameraId: string, scriptId?: string): Promise<FaceLiveInfo> {
+  const q = new URLSearchParams({ camera_id: cameraId })
+  if (scriptId) q.set('script_id', scriptId)
+  const res = await fetch(`${BASE_URL}/api/faces/live?${q.toString()}`)
+  return handle<FaceLiveInfo>(res)
 }
 
 // ---------------------------------------------------------------------------
