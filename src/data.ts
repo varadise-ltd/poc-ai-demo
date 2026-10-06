@@ -29,7 +29,7 @@ export const scripts: Script[] = [
   },
   {
     id: 'face',
-    name: 'Face Recognition',
+    name: 'Face Recognition New',
     meta: 'Recognized · Unknown · Database',
     loaded: false,
     cameras: ['Site Entrance Camera', 'Demo Camera'],

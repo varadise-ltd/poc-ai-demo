@@ -25,7 +25,7 @@ const face = computed(() => store.faceData.find((f) => f.id === store.editingFac
         </div>
         <ul class="detail-list">
           <li><span>Status</span><strong>Active</strong></li>
-          <li><span>Used by</span><strong>Face Recognition</strong></li>
+          <li><span>Used by</span><strong>Face Recognition New</strong></li>
           <li><span>Image quality</span><strong>Good</strong></li>
         </ul>
         <div class="actions" style="justify-content: flex-end; margin-top: 22px">

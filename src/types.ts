@@ -30,8 +30,10 @@ export interface Script {
   custom?: boolean
   /** Soft-deleted model: hidden from the catalog, shown only in the restore list. */
   deleted?: boolean
-  /** Counting script (People Counting / gate): supports count lines with in/out arrows. */
+  /** Counting script (People Counting / gate): supports count-line configuration. */
   isCounting?: boolean
+  /** Static pedestrian/vehicle boundary: one line, with no IN/OUT direction. */
+  isSegregation?: boolean
   /** Face-recognition script: preview shows the recognized-person readout. */
   isFace?: boolean
 }
@@ -89,7 +91,7 @@ export interface FaceMeta {
 export type CameraStatus = 'online' | 'offline'
 
 export interface Camera {
-  id: number
+  id: string
   name: string
   rtmp: string
   status: CameraStatus

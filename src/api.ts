@@ -173,7 +173,7 @@ export async function deleteFace(id: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 interface CameraRecord {
-  id: number
+  id: string
   name: string
   rtmp: string
   status: 'online' | 'offline'
@@ -229,7 +229,7 @@ export async function createCamera(
 }
 
 export async function updateCamera(
-  id: number,
+  id: string,
   fields: {
     name?: string
     rtmp?: string
@@ -249,7 +249,7 @@ export async function updateCamera(
   return toCamera(await handle<CameraRecord>(res))
 }
 
-export async function deleteCamera(id: number): Promise<void> {
+export async function deleteCamera(id: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/api/cameras/${id}`, { method: 'DELETE' })
   await handle(res)
 }
@@ -275,7 +275,7 @@ export async function probeCamera(url: string): Promise<CameraProbeResult> {
 }
 
 export interface CameraCheckResult {
-  camera_id: number
+  camera_id: string
   name: string
   status: 'online' | 'offline'
   probe: CameraProbeResult
@@ -318,6 +318,7 @@ interface ScriptRecord {
   custom?: boolean
   deleted?: boolean
   is_counting?: boolean
+  is_segregation?: boolean
   is_face?: boolean
   run?: { status: 'running' | 'stopped'; camera?: string | null; pid?: number | null }
 }
@@ -335,7 +336,7 @@ function toScript(r: ScriptRecord): Script {
   }))
   return {
     id: r.id,
-    name: r.name,
+    name: r.id === 'face_yolo' ? 'Face Recognition New' : r.name,
     meta: r.meta,
     loaded: r.loaded,
     cameras: r.cameras,
@@ -346,6 +347,7 @@ function toScript(r: ScriptRecord): Script {
     custom: r.custom ?? false,
     deleted: r.deleted ?? false,
     isCounting: r.is_counting ?? false,
+    isSegregation: r.is_segregation ?? false,
     isFace: r.is_face ?? false,
     params,
   }
@@ -565,7 +567,7 @@ export async function clearRoi(scriptId: string, camera: string): Promise<void> 
 }
 
 // ---------------------------------------------------------------------------
-// Gate (count line) configuration — people counting in/out lines with arrows
+// Gate-line configuration — directional counting or static segregation boundary.
 // ---------------------------------------------------------------------------
 
 export interface GateConfigInfo {
@@ -580,6 +582,8 @@ export interface GateConfigInfo {
   enabled: number | boolean
   /** +1: crossing toward the positive side is IN; -1: negative side is IN. */
   arrow_sign: 1 | -1
+  positive_role: 'pedestrian' | 'vehicle'
+  negative_role: 'pedestrian' | 'vehicle'
 }
 
 export interface GateReport {
@@ -609,12 +613,14 @@ export async function saveGateConfig(gate: {
   line_end_y: number
   enabled?: boolean
   arrow_sign?: 1 | -1
+  positive_role?: 'pedestrian' | 'vehicle'
+  negative_role?: 'pedestrian' | 'vehicle'
 }): Promise<GateConfigInfo> {
   console.log(`[api] saveGateConfig camera=${gate.camera_id} gate=${gate.gate_id} location=${gate.location}`)
   const res = await fetch(`${BASE_URL}/api/gates/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled: true, arrow_sign: 1, ...gate }),
+    body: JSON.stringify({ enabled: true, arrow_sign: 1, positive_role: 'pedestrian', negative_role: 'vehicle', ...gate }),
   })
   const data = await handle<{ gate: GateConfigInfo }>(res)
   return data.gate
@@ -722,11 +728,11 @@ export async function getGateLive(cameraId: string, scriptId?: string): Promise<
   return handle<GateLiveInfo>(res)
 }
 
-/** One recognized person, deduplicated by name within a 10-minute window. */
+/** One recognized person, deduplicated by name within a 5-minute window. */
 export interface FaceLivePerson {
   name: string
   confidence: number
-  /** Number of times recognized within the current 10-minute window. */
+  /** Number of times recognized within the current 5-minute window. */
   count?: number
   /** UTC ISO timestamp of the first recognition in this window. */
   first_seen_at?: string

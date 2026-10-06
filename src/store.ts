@@ -73,7 +73,7 @@ export const store = reactive({
   controlSelectedId: null as string | null,
   currentScriptDetailId: null as string | null,
   selectedEvent: null as EventItem | null,
-  cameraEditorId: null as number | null,
+  cameraEditorId: null as string | null,
   cameraEditorTitle: '',
   cameraEditorName: '',
   cameraEditorRtmp: '',
@@ -499,7 +499,7 @@ export async function addCameraRecord(
  * (a stale entry would otherwise keep pointing at the old one).
  */
 export async function updateCameraRecord(
-  id: number,
+  id: string,
   fields: {
     name?: string
     rtmp?: string
@@ -526,7 +526,7 @@ export async function updateCameraRecord(
  * the AI model catalog are reloaded: leaving them behind would show phantom
  * assignments that can no longer be run.
  */
-export async function removeCameraRecord(id: number): Promise<void> {
+export async function removeCameraRecord(id: string): Promise<void> {
   await api.deleteCamera(id)
   const idx = store.cameras.findIndex((c) => c.id === id)
   if (idx >= 0) store.cameras.splice(idx, 1)

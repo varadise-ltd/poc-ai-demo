@@ -459,9 +459,17 @@ interface GateLineLocal {
   start: [number, number] // pixel coords on the natural-size frame
   end: [number, number]
   arrowSign: 1 | -1 // +1: crossing toward the positive side is IN
+  positiveRole: 'pedestrian' | 'vehicle'
+  negativeRole: 'pedestrian' | 'vehicle'
   saved: boolean
 }
 const isCountingScript = computed(() => script.value?.isCounting === true)
+// Keep the built-in model safe across rolling frontend/backend restarts: older
+// API processes do not yet return `is_segregation`, but `gate` is unambiguously
+// the Pedestrian / Vehicle boundary model.
+const isSegregationScript = computed(() =>
+  script.value?.isSegregation === true || script.value?.id === 'gate',
+)
 const gateLines = ref<GateLineLocal[]>([])
 const lineDrawing = ref(false)
 const lineStartPoint = ref<[number, number] | null>(null)
@@ -478,7 +486,9 @@ function toggleLineDrawing(): void {
   if (lineDrawing.value) {
     roiDrawing.value = false
     currentPoints.value = []
-    roiStatus.value = 'Count line mode ON — click two points on the frame to draw the line. The arrow crosses the line: moving ALONG the arrow (OUT → IN) counts as IN, against it counts as OUT. Use ⇄ Flip to reverse.'
+    roiStatus.value = isSegregationScript.value
+      ? 'Boundary mode ON — click two points to separate the Pedestrian and Vehicle sides.'
+      : 'Count line mode ON — click two points on the frame to draw the line. The arrow crosses the line: moving ALONG the arrow (OUT → IN) counts as IN, against it counts as OUT. Use ⇄ Flip to reverse.'
   } else {
     roiStatus.value = 'Count line mode OFF.'
   }
@@ -498,19 +508,24 @@ function onLineCanvasClick(e: MouseEvent): void {
     return
   }
   const nextId = gateLines.value.length + 1
-  gateLines.value = [
-    ...gateLines.value,
-    {
-      gateId: `line-${nextId}`,
-      location: `Line ${nextId}`,
+  const line: GateLineLocal = {
+      gateId: isSegregationScript.value ? 'segregation-boundary' : `line-${nextId}`,
+      location: isSegregationScript.value ? 'Pedestrian / Vehicle boundary' : `Line ${nextId}`,
       start,
       end: pt,
       arrowSign: 1,
+      positiveRole: 'pedestrian',
+      negativeRole: 'vehicle',
       saved: false,
-    },
+    }
+  gateLines.value = isSegregationScript.value ? [line] : [
+    ...gateLines.value,
+    line,
   ]
   lineStartPoint.value = null
-  roiStatus.value = `Count line #${nextId} added — drag endpoints to adjust, ⇄ Flip to reverse IN/OUT, then 💾 Save Lines.`
+  roiStatus.value = isSegregationScript.value
+    ? 'Boundary line added — drag endpoints to adjust, select the Pedestrian side, then save.'
+    : `Count line #${nextId} added — drag endpoints to adjust, ⇄ Flip to reverse IN/OUT, then 💾 Save Lines.`
 }
 
 /** 箭头单位法向量（指向 IN 侧）；与后端 draw_overlay 相同的约定。 */
@@ -554,6 +569,15 @@ function flipGateLine(index: number): void {
   roiStatus.value = `Line #${index + 1} direction flipped — the arrow now marks the new IN side. Save to apply.`
 }
 
+function setPositiveRole(index: number, role: 'pedestrian' | 'vehicle'): void {
+  gateLines.value = gateLines.value.map((line, i) =>
+    i === index
+      ? { ...line, positiveRole: role, negativeRole: role === 'pedestrian' ? 'vehicle' : 'pedestrian' }
+      : line,
+  )
+  roiStatus.value = `Boundary mapping updated: right side = ${role}, left side = ${role === 'pedestrian' ? 'vehicle' : 'pedestrian'}.`
+}
+
 async function removeGateLine(index: number): Promise<void> {
   const line = gateLines.value[index]
   gateLines.value = gateLines.value.filter((_, i) => i !== index)
@@ -582,8 +606,13 @@ async function loadGateLines(): Promise<void> {
         start: [Math.round(g.line_start_x * roiNaturalW.value), Math.round(g.line_start_y * roiNaturalH.value)] as [number, number],
         end: [Math.round(g.line_end_x * roiNaturalW.value), Math.round(g.line_end_y * roiNaturalH.value)] as [number, number],
         arrowSign: g.arrow_sign === -1 ? -1 : 1,
+        positiveRole: g.positive_role === 'vehicle' ? 'vehicle' : 'pedestrian',
+        negativeRole: g.negative_role === 'pedestrian' ? 'pedestrian' : 'vehicle',
         saved: true,
       }))
+    if (isSegregationScript.value && gateLines.value.length > 1) {
+      gateLines.value = [gateLines.value[0]]
+    }
     if (gateLines.value.length) {
       roiStatus.value = (roiStatus.value ? `${roiStatus.value} ` : '') + `Loaded ${gateLines.value.length} saved count line(s).`
     }
@@ -615,6 +644,8 @@ async function saveGateLines(): Promise<void> {
         line_end_y: line.end[1] / roiNaturalH.value,
         enabled: true,
         arrow_sign: line.arrowSign,
+        positive_role: line.positiveRole,
+        negative_role: line.negativeRole,
       })
       savedLines.push({
         gateId: gate.gate_id,
@@ -622,6 +653,8 @@ async function saveGateLines(): Promise<void> {
         start: line.start,
         end: line.end,
         arrowSign: gate.arrow_sign === -1 ? -1 : 1,
+        positiveRole: gate.positive_role === 'vehicle' ? 'vehicle' : 'pedestrian',
+        negativeRole: gate.negative_role === 'pedestrian' ? 'pedestrian' : 'vehicle',
         saved: true,
       })
     }
@@ -907,28 +940,35 @@ onBeforeUnmount(() => {
                 class="btn"
                 :class="{ 'drawing-active': lineDrawing }"
                 :disabled="gateLoading"
-                title="Draw a count line with an IN-direction arrow (people counting)"
+                :title="isSegregationScript ? 'Draw one boundary line between Pedestrian and Vehicle sides' : 'Draw a count line with a blue IN-direction arrow (people counting)'"
                 @click="toggleLineDrawing"
               >
-                ↔️ Draw Count Line
+                {{ isSegregationScript ? '↔️ Draw Boundary Line' : '↔️ Draw Count Line' }}
               </button>
               <button
                 class="btn primary"
                 :disabled="gateSaving || !gateLines.length"
-                title="Save count lines + arrow directions to backend and database"
+                :title="isSegregationScript ? 'Save the boundary and side mapping' : 'Save count lines + arrow directions to backend and database'"
                 @click="saveGateLines"
               >
-                {{ gateSaving ? 'Saving…' : '💾 Save Lines' }}
+                {{ gateSaving ? 'Saving…' : (isSegregationScript ? '💾 Save Boundary' : '💾 Save Lines') }}
               </button>
               <span v-for="(line, i) in gateLines" :key="line.gateId" class="gate-line-chip">
                 <strong>{{ line.location || line.gateId }}</strong>
-                <button class="btn" title="Flip the IN/OUT arrow direction" @click="flipGateLine(i)">⇄ Flip</button>
+                <template v-if="isSegregationScript">
+                  <button class="btn" :class="{ primary: line.positiveRole === 'pedestrian' }" title="Right side is Pedestrian" @click="setPositiveRole(i, 'pedestrian')">Right = Pedestrian</button>
+                  <button class="btn" :class="{ primary: line.positiveRole === 'vehicle' }" title="Right side is Vehicle" @click="setPositiveRole(i, 'vehicle')">Right = Vehicle</button>
+                </template>
+                <button v-else class="btn" title="Flip the IN/OUT arrow direction" @click="flipGateLine(i)">⇄ Flip</button>
                 <button class="btn danger" title="Delete this count line" @click="removeGateLine(i)">🗑</button>
               </span>
             </div>
             <div class="roi-hint">
-              <template v-if="lineDrawing">
-                ↔️ Count line mode — click two points to draw the line · the arrow crosses the line: crossing ALONG the arrow = <strong>IN</strong>, against the arrow = <strong>OUT</strong> · drag endpoints to adjust · ⇄ Flip reverses the direction · 💾 Save Lines persists to backend &amp; database (the counting algorithm uses the same arrow direction)
+              <template v-if="lineDrawing && isSegregationScript">
+                ↔️ Boundary mode — click two points to draw one separator · right side = <strong>{{ gateLines[0]?.positiveRole ?? 'Pedestrian' }}</strong> · left side = <strong>{{ gateLines[0]?.negativeRole ?? 'Vehicle' }}</strong> · drag endpoints to adjust · 💾 Save Boundary
+              </template>
+              <template v-else-if="lineDrawing">
+                ↔️ Count line mode — click two points to draw the line with a <strong>blue arrow</strong> marking IN/OUT · crossing ALONG the arrow = <strong>IN</strong>, against the arrow = <strong>OUT</strong> · drag endpoints to adjust · ⇄ Flip reverses the direction · 💾 Save Lines persists to backend &amp; database (the counting algorithm uses the same arrow direction)
               </template>
               <template v-else-if="roiDrawing">
                 ✏️ Drawing mode — click to add points · double-click to finish each ROI · double-click an existing ROI edge to add a point · click a point to select it · right-click to delete the selected point · then 💾 Save ROI
@@ -960,38 +1000,35 @@ onBeforeUnmount(() => {
                   @load="onFrameLoad"
                 />
                 <svg class="roi-overlay" :viewBox="`0 0 ${roiNaturalW} ${roiNaturalH}`">
-                <defs>
+                <defs v-if="!isSegregationScript">
                   <marker id="gate-arrow-head" viewBox="0 0 10 10" refX="8" refY="5"
                           markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="#00c8ff" />
                   </marker>
                 </defs>
-                <!-- Count lines with IN-direction arrows (people counting) -->
+                <!-- Directional count lines or a plain segregation boundary. -->
                 <g v-for="(line, li) in gateLines" :key="'gate' + li">
                   <line
                     :x1="line.start[0]" :y1="line.start[1]"
                     :x2="line.end[0]" :y2="line.end[1]"
                     class="gate-line"
                   />
-                  <!-- 箭头横穿计数线：尾在 OUT 侧 → 尖在 IN 侧；顺箭头穿越 = IN，逆箭头 = OUT -->
-                  <line
-                    :x1="arrowTail(line)[0]" :y1="arrowTail(line)[1]"
-                    :x2="arrowTip(line)[0]" :y2="arrowTip(line)[1]"
-                    class="gate-arrow"
-                    marker-end="url(#gate-arrow-head)"
-                  />
-                  <text :x="arrowTip(line)[0] + 8" :y="arrowTip(line)[1] + 6" class="gate-arrow-label in">
-                    IN
-                  </text>
-                  <text :x="arrowTail(line)[0] + 8" :y="arrowTail(line)[1] - 6" class="gate-arrow-label out">
-                    OUT
-                  </text>
+                  <template v-if="!isSegregationScript">
+                    <line
+                      :x1="arrowTail(line)[0]" :y1="arrowTail(line)[1]"
+                      :x2="arrowTip(line)[0]" :y2="arrowTip(line)[1]"
+                      class="gate-arrow"
+                      marker-end="url(#gate-arrow-head)"
+                    />
+                    <text :x="arrowTip(line)[0] + 8" :y="arrowTip(line)[1] + 6" class="gate-arrow-label in">IN</text>
+                    <text :x="arrowTail(line)[0] + 8" :y="arrowTail(line)[1] - 6" class="gate-arrow-label out">OUT</text>
+                  </template>
                   <text
                     :x="(line.start[0] + line.end[0]) / 2 + 10"
                     :y="(line.start[1] + line.end[1]) / 2 - 10"
                     class="gate-arrow-label name"
                   >
-                    {{ line.location || line.gateId }}
+                    {{ isSegregationScript ? `Right: ${line.positiveRole} · Left: ${line.negativeRole}` : (line.location || line.gateId) }}
                   </text>
                   <circle
                     :cx="line.start[0]" :cy="line.start[1]" r="8"

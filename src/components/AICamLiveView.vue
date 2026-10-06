@@ -5,7 +5,6 @@ import type { FaceLiveInfo, GateLiveInfo } from '../api'
 import type { Camera, EventItem, Script } from '../types'
 import {
   clearEvents,
-  liveEvents,
   loadCameraAI,
   loadCameras,
   loadHistoryEvents,
@@ -134,7 +133,7 @@ async function loadPreviewHistory(): Promise<void> {
   const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
   await loadHistoryEvents({
     scriptId: store.selectedScriptId,
-    cameraId: store.selectedCamera,
+    cameraId: monitorCamera.value,
     start: start.toISOString(),
     end: end.toISOString(),
   })
@@ -205,11 +204,42 @@ async function loadFaceLive(): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Realtime monitoring scope
+// ---------------------------------------------------------------------------
+// The previewed camera is only one of the AI model's cameras, and every camera
+// runs its own worker. The event lists below used to hard-filter on the
+// previewed camera, so switching to another camera was the only way to see the
+// others. Detection history spans every camera of the AI model, so give the
+// monitoring lists the same choice (default: all cameras).
+const monitorCamera = ref('all')
+const monitorCameras = computed<string[]>(() => selectedScript.value?.cameras ?? [])
+
+/** Detection events of the selected AI model within the chosen camera scope. */
+const monitorEvents = computed<EventItem[]>(() => {
+  const script = selectedScript.value
+  return store.detectionEvents.filter(
+    (e) =>
+      (e.script === script.name || e.script === script.id) &&
+      (monitorCamera.value === 'all' || e.camera === monitorCamera.value),
+  )
+})
+
+// The counting summary is built from durable history rows that are fetched per
+// camera scope, so switching the scope must refetch them.
+watch(monitorCamera, () => {
+  if (isCountingScript.value) void loadPreviewHistory()
+})
+
 const intervalHistory = computed(() => {
   if (!isCountingScript.value) return []
-  const buckets = new Map<string, { period: string; detections: number; roi: number; in: number; out: number }>()
+  const buckets = new Map<
+    string,
+    { period: string; detections: number; roi: number; in: number; out: number; cameras: Set<string> }
+  >()
   for (const event of store.historyEvents) {
-    if (event.camera !== store.selectedCamera || event.script !== selectedScript.value.name) continue
+    if (event.script !== selectedScript.value.name) continue
+    if (monitorCamera.value !== 'all' && event.camera !== monitorCamera.value) continue
     const parsed = new Date(`${event.date}T${event.time}`)
     if (Number.isNaN(parsed.getTime())) continue
     parsed.setMinutes(Math.floor(parsed.getMinutes() / 10) * 10, 0, 0)
@@ -220,14 +250,18 @@ const intervalHistory = computed(() => {
       roi: 0,
       in: 0,
       out: 0,
+      cameras: new Set<string>(),
     }
     bucket.detections += 1
+    if (event.camera) bucket.cameras.add(event.camera)
     if (event.name.toLowerCase().includes('entered roi')) bucket.roi += 1
     if (event.name.startsWith('IN ·')) bucket.in += 1
     if (event.name.startsWith('OUT ·')) bucket.out += 1
     buckets.set(key, bucket)
   }
-  return [...buckets.values()].sort((a, b) => b.period.localeCompare(a.period))
+  return [...buckets.entries()]
+    .map(([key, b]) => ({ ...b, key, cameraLabel: [...b.cameras].join(', ') }))
+    .sort((a, b) => b.key.localeCompare(a.key))
 })
 
 // ---------------------------------------------------------------------------
@@ -242,6 +276,8 @@ interface LiveEventBucket {
   period: string
   count: number
   names: string[]
+  cameras: Set<string>
+  cameraLabel: string
   latest: EventItem | null
 }
 
@@ -254,13 +290,22 @@ function extractDetectedName(eventName: string): string {
 
 const liveEventBuckets = computed<LiveEventBucket[]>(() => {
   const minutes = LIVE_BUCKET_MINUTES
-  const buckets = new Map<number, { count: number; names: Set<string>; latest: EventItem | null }>()
-  for (const e of liveEvents.value) {
+  const buckets = new Map<
+    number,
+    { count: number; names: Set<string>; cameras: Set<string>; latest: EventItem | null }
+  >()
+  for (const e of monitorEvents.value) {
     const ts = e.timestamp
     if (typeof ts !== 'number' || Number.isNaN(ts)) continue
     const start = Math.floor(ts / (minutes * 60000)) * (minutes * 60000)
-    const bucket = buckets.get(start) ?? { count: 0, names: new Set<string>(), latest: null }
+    const bucket = buckets.get(start) ?? {
+      count: 0,
+      names: new Set<string>(),
+      cameras: new Set<string>(),
+      latest: null,
+    }
     bucket.count += 1
+    if (e.camera) bucket.cameras.add(e.camera)
     if (!bucket.latest || ts > (bucket.latest.timestamp ?? 0)) bucket.latest = e
     if (isFaceScript.value) {
       const name = extractDetectedName(e.name)
@@ -274,6 +319,8 @@ const liveEventBuckets = computed<LiveEventBucket[]>(() => {
       period: new Date(startMs).toLocaleTimeString([], { hour12: false }),
       count: b.count,
       names: [...b.names],
+      cameras: b.cameras,
+      cameraLabel: [...b.cameras].join(', '),
       latest: b.latest,
     }))
     .sort((a, b) => b.startMs - a.startMs)
@@ -494,9 +541,16 @@ onBeforeUnmount(() => {
         <div class="panel-title">
           <div>
             <h2>Realtime monitoring</h2>
-            <p class="subtitle">Results from the selected script and camera.</p>
+            <p class="subtitle">Results from the selected script and camera scope.</p>
           </div>
           <div style="display: flex; align-items: end; gap: 12px">
+            <label class="monitor-scope">
+              <span>Camera</span>
+              <select v-model="monitorCamera">
+                <option value="all">All cameras</option>
+                <option v-for="c in monitorCameras" :key="c" :value="c">{{ c }}</option>
+              </select>
+            </label>
             <button class="btn" @click="store.showHistory = true">History</button>
             <button class="btn" @click="clearEvents">Clear</button>
           </div>
@@ -505,13 +559,7 @@ onBeforeUnmount(() => {
         <div class="stat-row">
           <div class="stat">
             <div class="stat-label">Detections</div>
-            <div class="stat-value">{{ liveEvents.length }}</div>
-          </div>
-        </div>
-
-        <div v-if="isCountingScript" class="gate-live">
-          <div class="gate-live-head">
-            <strong>{{ selectedScript.name }} · live counting</strong>
+            <div class="stat-value">{{ monitorEvents.length }}</div>
             <span class="subtitle">
               ROI + count-line statistics from the running AI model
             </span>
@@ -589,7 +637,7 @@ onBeforeUnmount(() => {
           <div class="gate-live-head">
             <strong>{{ selectedScript.name }} · face recognition</strong>
             <span class="subtitle">
-              Cumulative session counts; recognized people deduplicated per 10-minute window
+              Cumulative session counts; recognized people deduplicated per 5-minute window
             </span>
             <span v-if="faceLive?.mode === 'MOCK'" class="gate-live-badge">DEMO</span>
           </div>
@@ -637,12 +685,15 @@ onBeforeUnmount(() => {
               <div>
                 <div class="event-name">10-minute people-counting summary</div>
                 <div class="event-meta">
+                  <template v-if="monitorCamera === 'all' && bucket.cameraLabel">
+                    <strong>{{ bucket.cameraLabel }}</strong> ·
+                  </template>
                   ROI entries {{ bucket.roi }} · IN {{ bucket.in }} · OUT {{ bucket.out }} · events {{ bucket.detections }}
                 </div>
               </div>
             </div>
           </div>
-          <div v-else class="detail-empty">No counting history for the selected camera.</div>
+          <div v-else class="detail-empty">No counting history for the selected camera scope.</div>
         </div>
         <div v-else class="events-list">
           <template v-if="liveEventBuckets.length">
@@ -663,14 +714,14 @@ onBeforeUnmount(() => {
                     <strong>{{ bucket.names.join(', ') }}</strong>
                   </template>
                   <template v-else>
-                    <strong>{{ store.selectedCamera }}</strong> · {{ bucket.latest?.meta ?? '' }}
+                    <strong>{{ bucket.cameraLabel || store.selectedCamera }}</strong> · {{ bucket.latest?.meta ?? '' }}
                   </template>
                 </div>
               </div>
               <span v-if="bucket.latest" class="confidence">{{ bucket.latest.confidence }}</span>
             </div>
           </template>
-          <div v-else class="detail-empty">No results for the selected script and camera.</div>
+          <div v-else class="detail-empty">No results for the selected script and camera scope.</div>
         </div>
       </section>
     </div>

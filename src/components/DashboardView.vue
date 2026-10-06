@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { listCameras, queryDashboard } from '../api'
+import { computed, onMounted, ref, watch } from 'vue'
+import { assetUrl, listCameras, queryDashboard } from '../api'
 import type { Camera, DashboardDefinition, DashboardQueryResult } from '../types'
 
 const defaultDashboards: DashboardDefinition[] = [
-  { id: 'face', title: 'Face Recognition', subtitle: 'Face Recognition' },
+  { id: 'face', title: 'Face Recognition New', subtitle: 'Face Recognition New' },
   { id: 'inout', title: 'In / Out', subtitle: 'People Counting' },
   { id: 'ppe', title: 'PPE detection', subtitle: 'PPE detection' },
   { id: 'object', title: 'Object detection', subtitle: 'Human detection' },
@@ -18,6 +18,30 @@ const loading = ref(false)
 const error = ref('')
 const filters = ref({ cameraId: 'all', personName: 'all', matchStatus: 'all' as 'all' | 'matched' | 'unknown', violation: 'all' })
 const rangePreset = ref('7d')
+const customStart = ref('')
+const customEnd = ref('')
+
+function formatLocalDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+/** When switching to a custom range, seed the inputs with the last 7 days. */
+watch(rangePreset, (preset) => {
+  if (preset === 'custom' && (!customStart.value || !customEnd.value)) {
+    const now = new Date()
+    const from = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000)
+    customStart.value = formatLocalDate(from)
+    customEnd.value = formatLocalDate(now)
+  }
+})
+
+const customRangeError = computed(() => {
+  if (rangePreset.value !== 'custom') return ''
+  if (customStart.value && customEnd.value && customEnd.value < customStart.value) {
+    return 'End date cannot be before start date'
+  }
+  return ''
+})
 
 const selectedDashboard = computed(() => dashboards.value.find((item) => item.id === selectedId.value))
 const descriptions: Record<string, string> = {
@@ -37,11 +61,39 @@ const violations = computed(() => {
 })
 const visibleRecords = computed(() => (result.value?.records ?? []).slice(0, 100))
 
-async function loadDashboard(): Promise<void> {
-  const id = ++requestId
-  loading.value = true
-  error.value = ''
-  result.value = null
+// --- Evidence snapshot viewer ---------------------------------------------
+// Every detection record carries the annotated frame captured with its event,
+// so the same thumbnail + full-view experience works on all four dashboards
+// (Face / In-Out / PPE / Object). Records without a stored snapshot stay
+// visible but the thumbnail is disabled instead of opening an empty lightbox.
+const snapshotRecords = computed(() => visibleRecords.value.filter((record) => record.snapshot_url))
+const viewerIndex = ref<number | null>(null)
+const viewerRecord = computed(() =>
+  viewerIndex.value == null ? null : snapshotRecords.value[viewerIndex.value] ?? null,
+)
+
+function openSnapshot(record: DashboardQueryResult['records'][number]): void {
+  if (!record.snapshot_url) return
+  const index = snapshotRecords.value.findIndex((item) => item.record_id === record.record_id)
+  viewerIndex.value = index >= 0 ? index : null
+}
+
+function closeViewer(): void {
+  viewerIndex.value = null
+}
+
+function stepViewer(delta: number): void {
+  const total = snapshotRecords.value.length
+  if (viewerIndex.value == null || total === 0) return
+  viewerIndex.value = (viewerIndex.value + delta + total) % total
+}
+
+function currentRange(): { start: string; end: string } {
+  if (rangePreset.value === 'custom') {
+    const start = new Date(`${customStart.value}T00:00:00`)
+    const end = new Date(`${customEnd.value}T23:59:59`)
+    return { start: start.toISOString(), end: end.toISOString() }
+  }
   const start = new Date()
   start.setHours(0, 0, 0, 0)
   if (rangePreset.value === '7d') start.setDate(start.getDate() - 6)
@@ -49,11 +101,25 @@ async function loadDashboard(): Promise<void> {
   if (rangePreset.value === 'mtd') start.setDate(1)
   const end = new Date()
   end.setHours(24, 0, 0, 0)
+  return { start: start.toISOString(), end: end.toISOString() }
+}
+
+async function loadDashboard(): Promise<void> {
+  const id = ++requestId
+  loading.value = true
+  error.value = ''
+  result.value = null
+  if (rangePreset.value === 'custom' && customRangeError.value) {
+    error.value = customRangeError.value
+    if (id === requestId) loading.value = false
+    return
+  }
+  const { start, end } = currentRange()
   try {
     const response = await queryDashboard(selectedId.value, {
       ...filters.value,
       personName: filters.value.matchStatus === 'unknown' ? 'all' : filters.value.personName,
-      start: start.toISOString(), end: end.toISOString(),
+      start, end,
     })
     if (id === requestId) result.value = response
   } catch (err) {
@@ -69,6 +135,8 @@ function resetFilters(): void {
   error.value = ''
   filters.value = { cameraId: 'all', personName: 'all', matchStatus: 'all', violation: 'all' }
   rangePreset.value = '7d'
+  customStart.value = ''
+  customEnd.value = ''
   result.value = null
 }
 
@@ -139,9 +207,21 @@ onMounted(async () => {
                 <option value="7d">Last 7 days</option>
                 <option value="30d">Last 30 days</option>
                 <option value="mtd">Month to date</option>
+                <option value="custom">Custom range</option>
               </select>
               <span class="time-range-caret">▾</span>
             </div>
+            <div v-if="rangePreset === 'custom'" class="custom-range">
+              <div class="custom-range-field">
+                <label>Start date</label>
+                <input v-model="customStart" type="date" :max="customEnd || undefined" />
+              </div>
+              <div class="custom-range-field">
+                <label>End date</label>
+                <input v-model="customEnd" type="date" :min="customStart || undefined" />
+              </div>
+            </div>
+            <p v-if="customRangeError" class="custom-range-error">{{ customRangeError }}</p>
           </div>
           <div class="dash-filter">
             <label>Camera</label>
@@ -172,7 +252,7 @@ onMounted(async () => {
               <option v-for="item in violations" :key="item" :value="item">{{ item }}</option>
             </select>
           </div>
-          <button class="btn primary dashboard-search" :disabled="loading" @click="loadDashboard">{{ loading ? 'Loading…' : 'Search' }}</button>
+          <button class="btn primary dashboard-search" :disabled="loading || Boolean(customRangeError)" @click="loadDashboard">{{ loading ? 'Loading…' : 'Search' }}</button>
           <button class="btn dashboard-reset" @click="resetFilters">Reset</button>
         </div>
 
@@ -196,6 +276,22 @@ onMounted(async () => {
           </div>
           <div class="dashboard-records">
             <div v-for="record in visibleRecords" :key="record.record_id" class="dashboard-record">
+              <button
+                type="button"
+                class="dashboard-record-thumb"
+                :class="{ empty: !record.snapshot_url }"
+                :disabled="!record.snapshot_url"
+                :title="record.snapshot_url ? 'View snapshot' : 'No snapshot stored for this record'"
+                @click="openSnapshot(record)"
+              >
+                <img
+                  v-if="record.snapshot_url"
+                  :src="assetUrl(record.snapshot_url)"
+                  :alt="`Snapshot for ${record.record_id}`"
+                  loading="lazy"
+                />
+                <span v-else aria-hidden="true">—</span>
+              </button>
               <div class="dashboard-record-time">{{ formatTime(record.event_time) }}</div>
               <div class="dashboard-record-main">
                 <strong>{{ record.person_name || record.message }}</strong>
@@ -208,6 +304,44 @@ onMounted(async () => {
           </div>
         </template>
       </section>
+    </div>
+
+    <div class="detail-modal" :class="{ show: viewerRecord !== null }" @click.self="closeViewer">
+      <div v-if="viewerRecord" class="detail-dialog panel snapshot-viewer" style="width: min(920px, 100%)">
+        <div class="panel-title">
+          <div>
+            <h2>Detection snapshot</h2>
+            <p class="subtitle">{{ formatTime(viewerRecord.event_time) }} · {{ viewerRecord.camera_id || 'External source' }}</p>
+          </div>
+          <button class="icon-btn" @click="closeViewer">×</button>
+        </div>
+        <div class="detail-body">
+          <img
+            class="snapshot-viewer-image"
+            :src="assetUrl(viewerRecord.snapshot_url)"
+            :alt="`Snapshot for ${viewerRecord.record_id}`"
+          />
+          <dl class="snapshot-viewer-meta">
+            <div><dt>Time</dt><dd>{{ formatTime(viewerRecord.event_time) }}</dd></div>
+            <div><dt>Camera</dt><dd>{{ viewerRecord.camera_id || 'External source' }}</dd></div>
+            <div><dt>AI model</dt><dd>{{ viewerRecord.script_id }}</dd></div>
+            <div><dt>Status</dt><dd>{{ statusLabel(viewerRecord) }}</dd></div>
+            <div v-if="viewerRecord.person_name"><dt>Person</dt><dd>{{ viewerRecord.person_name }}</dd></div>
+            <div><dt>Confidence</dt><dd>{{ viewerRecord.confidence == null ? '—' : `${Math.round(viewerRecord.confidence * 100)}%` }}</dd></div>
+            <div v-if="viewerRecord.zone"><dt>Zone</dt><dd>{{ viewerRecord.zone }}</dd></div>
+            <div v-if="viewerRecord.gate_id"><dt>Gate / line</dt><dd>{{ viewerRecord.gate_id }}</dd></div>
+            <div v-if="viewerRecord.violations.length"><dt>Missing PPE</dt><dd>{{ viewerRecord.violations.join(', ') }}</dd></div>
+            <div><dt>Mode</dt><dd>{{ viewerRecord.mode }}</dd></div>
+            <div><dt>Message</dt><dd>{{ viewerRecord.message }}</dd></div>
+            <div><dt>Record</dt><dd>{{ viewerRecord.record_id }}</dd></div>
+          </dl>
+        </div>
+        <div v-if="snapshotRecords.length > 1" class="snapshot-viewer-actions">
+          <button class="btn" @click="stepViewer(-1)">← Previous</button>
+          <span class="snapshot-viewer-count">{{ (viewerIndex ?? 0) + 1 }} / {{ snapshotRecords.length }}</span>
+          <button class="btn" @click="stepViewer(1)">Next →</button>
+        </div>
+      </div>
     </div>
   </section>
 </template>
