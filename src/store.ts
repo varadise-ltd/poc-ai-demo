@@ -589,8 +589,8 @@ export async function checkCameraStatus(name: string): Promise<api.CameraCheckRe
 // Face management (SQLite-backed backend)
 // ---------------------------------------------------------------------------
 
-export async function loadFaces(): Promise<void> {
-  store.faceLoading = true
+export async function loadFaces(quiet = false): Promise<void> {
+  if (!quiet) store.faceLoading = true
   store.faceError = ''
   try {
     const [faces, meta] = await Promise.all([api.listFaces(), api.getFaceMeta()])
@@ -599,13 +599,42 @@ export async function loadFaces(): Promise<void> {
   } catch (err) {
     store.faceError = err instanceof Error ? err.message : String(err)
   } finally {
-    store.faceLoading = false
+    if (!quiet) store.faceLoading = false
   }
+}
+
+// 512d 向量後台補算輪詢：上傳後 512d 在後台線程異步寫回（defer_512=True），
+// 保存接口回傳當下 has_embedding_512 仍是 false。前端輪詢 /api/faces 直到目標
+// 人臉的 512d 補算完成，讓列表上的 512d ✓/✗ 徽章自動翻轉，不必手動重整。
+let face512PollTimer: number | null = null
+
+function clearFace512Poll(): void {
+  if (face512PollTimer !== null) {
+    window.clearTimeout(face512PollTimer)
+    face512PollTimer = null
+  }
+}
+
+function scheduleFace512Poll(targetId: number, attemptsLeft = 30): void {
+  clearFace512Poll()
+  if (attemptsLeft <= 0) return
+  face512PollTimer = window.setTimeout(async () => {
+    let done = false
+    try {
+      const faces = await api.listFaces()
+      store.faceData = faces
+      done = faces.some((f) => f.id === targetId && f.hasEmbedding512)
+    } catch {
+      // 忽略輪詢錯誤，稍後重試
+    }
+    if (!done) scheduleFace512Poll(targetId, attemptsLeft - 1)
+  }, 2000)
 }
 
 export async function addFaceRecord(name: string, file: File): Promise<FaceValidation | undefined> {
   const { face, validation } = await api.createFace(name, file)
   store.faceData.unshift(face)
+  if (!face.hasEmbedding512) scheduleFace512Poll(face.id)
   return validation
 }
 
@@ -613,6 +642,8 @@ export async function updateFaceRecord(id: number, name?: string, file?: File): 
   const { face, validation } = await api.updateFace(id, name, file)
   const idx = store.faceData.findIndex((f) => f.id === id)
   if (idx >= 0) store.faceData.splice(idx, 1, face)
+  // 僅換圖才重新補算 512d（改名不動向量）；補算未就緒時啟動輪詢。
+  if (file && !face.hasEmbedding512) scheduleFace512Poll(face.id)
   return validation
 }
 
