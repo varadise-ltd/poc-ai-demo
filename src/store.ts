@@ -230,6 +230,10 @@ export async function refreshSelectedScriptRun(): Promise<void> {
   const scriptId = store.selectedScriptId
   const camera = store.selectedCamera
   if (!scriptId) return
+  // A soft-deleted / unknown model is dropped from the catalog but can linger
+  // as the selected id until the list reloads. Polling it would 404 on every
+  // tick, so skip it and let loadScripts() re-point the selection.
+  if (!store.scripts.some((s) => s.id === scriptId)) return
   try {
     const run = await api.getScriptStatus(scriptId, camera)
     // The selection may have changed while a slow poll was in flight. Never
