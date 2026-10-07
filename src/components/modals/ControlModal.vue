@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
-import { probeCamera } from '../../api'
+import { probeCamera, redactUrl } from '../../api'
 import { checkCameraStatus, scriptOutput, store, toggleRun as toggleRunScript } from '../../store'
 
 const script = computed(() => store.scripts.find((s) => s.id === store.controlSelectedId))
@@ -107,7 +107,7 @@ async function toggleRun(): Promise<void> {
             <div class="control-camera-urls">
               <div class="control-url-row">
                 <span class="control-url-label">Input</span>
-                <code class="control-url-value">{{ inputUrl(c) }}</code>
+                <code class="control-url-value">{{ redactUrl(inputUrl(c)) }}</code>
                 <div class="control-url-actions">
                   <button
                     class="btn check-btn"
@@ -125,7 +125,7 @@ async function toggleRun(): Promise<void> {
 
               <div class="control-url-row">
                 <span class="control-url-label">Output</span>
-                <code class="control-url-value">{{ outputUrl(c) }}</code>
+                <code class="control-url-value">{{ redactUrl(outputUrl(c)) }}</code>
                 <div class="control-url-actions">
                   <button
                     class="btn check-btn"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { listScripts as apiListScripts } from '../api'
+import { listScripts as apiListScripts, redactUrl } from '../api'
 import {
   addStreamCamera,
   availableStreamCameras,
@@ -405,10 +405,10 @@ onBeforeUnmount(() => {
               </div>
               <div v-for="cam in s.cameras" :key="cam" class="stream-map-row">
                 <div class="stream-cam" :title="cam">{{ cam }}</div>
-                <div class="stream-in" :title="store.cameraInputs[cam] ?? ''">{{ store.cameraInputs[cam] ?? '—' }}</div>
+                <div class="stream-in" :title="redactUrl(store.cameraInputs[cam] ?? '')">{{ redactUrl(store.cameraInputs[cam] ?? '—') }}</div>
                 <!-- Read-only: the annotated stream is derived from the AI model + camera -->
-                <div class="stream-out" :title="scriptOutput(s.id, cam)">
-                  <span class="stream-out-value">{{ scriptOutput(s.id, cam) }}</span>
+                <div class="stream-out" :title="redactUrl(scriptOutput(s.id, cam))">
+                  <span class="stream-out-value">{{ redactUrl(scriptOutput(s.id, cam)) }}</span>
                 </div>
                 <!-- flexible spacer: keeps Status/Run anchored to the right -->
                 <div></div>

@@ -1702,6 +1702,18 @@ body:has(.detail-modal.show) {
   font-size: 13px;
 }
 
+.gate-arrow-label.side-r {
+  fill: #2ee06e;
+  font-size: 40px;
+  font-weight: 900;
+}
+
+.gate-arrow-label.side-l {
+  fill: #ffb020;
+  font-size: 40px;
+  font-weight: 900;
+}
+
 .roi-point.gate-endpoint {
   fill: #00c8ff;
 }
@@ -2150,6 +2162,263 @@ body:has(.detail-modal.show) {
 
 .config-content {
   padding: 22px;
+}
+
+/* ===================== Crane Loading dashboard ===================== */
+.crane-note {
+  margin-bottom: 16px;
+}
+
+.crane-camera-filter {
+  min-width: 220px;
+}
+
+.crane-camera-details {
+  position: relative;
+}
+
+.crane-camera-display {
+  display: block;
+  min-width: 190px;
+  border: 1px solid #cfd8df;
+  border-radius: 5px;
+  background: #fff;
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink);
+}
+
+.crane-camera-display::-webkit-details-marker {
+  display: none;
+}
+
+.crane-camera-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: none;
+  min-width: 230px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(13, 37, 56, 0.16);
+}
+
+.crane-camera-details[open] .crane-camera-menu {
+  display: grid;
+  gap: 8px;
+}
+
+.dash-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.dash-check input {
+  margin: 0;
+}
+
+.crane-card {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  padding: 18px;
+  margin-top: 18px;
+}
+
+.crane-card .dash-sec-head {
+  margin-top: 0;
+}
+
+.crane-trend {
+  height: 205px;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  padding: 10px 4px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.crane-trend-col {
+  min-width: 58px;
+  height: 190px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.crane-trend-bar {
+  width: 28px;
+  min-height: 14px;
+  border-radius: 5px 5px 0 0;
+  background: var(--orange);
+}
+
+.crane-trend-bar.dwell {
+  background: var(--green);
+}
+
+.crane-trend-col.clickable {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+.crane-trend-col.clickable:hover {
+  background: #f4f6f8;
+}
+
+.crane-trend-col.clickable.active {
+  background: var(--orange-soft);
+}
+
+.crane-trend-col span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.crane-trend-col strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.crane-trend-filter {
+  margin-bottom: 10px;
+  display: flex;
+  gap: 12px;
+}
+
+.crane-line-chart svg {
+  display: block;
+  width: 100%;
+  max-height: 290px;
+  font: 11px sans-serif;
+  fill: var(--muted);
+}
+
+.crane-x-dim {
+  fill: #c2ccd4;
+}
+
+.crane-x-active {
+  fill: var(--orange);
+  font-weight: 700;
+}
+
+.crane-drill {
+  margin-top: 16px;
+}
+
+.crane-session {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px 14px;
+  margin-bottom: 10px;
+  background: #fff;
+}
+
+.crane-session-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.crane-session-row:last-child {
+  border-bottom: 0;
+}
+
+.frame-mini {
+  width: 48px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #223d4c, #0e202d);
+}
+
+.crane-session-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.crane-session-time {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.crane-session-cam {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.crane-session-dur {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--navy);
+  white-space: nowrap;
+}
+
+.dash-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.dash-tag.match {
+  background: #e9f7f0;
+  color: var(--green);
+}
+
+.dash-tag.loading {
+  background: var(--orange-soft);
+  color: var(--orange);
+}
+
+.dash-pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.dash-page-info {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dash-empty {
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #5f7a91;
+  font-size: 13px;
+}
+
+@media (max-width: 650px) {
+  .crane-camera-menu {
+    min-width: 210px;
+  }
+
+  .crane-card {
+    padding: 12px;
+  }
 }
 
 .config-head {

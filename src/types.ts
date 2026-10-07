@@ -159,7 +159,7 @@ export interface CameraAI {
 }
 
 export interface DashboardDefinition {
-  id: 'face' | 'inout' | 'ppe' | 'object'
+  id: 'crane' | 'face' | 'inout' | 'ppe' | 'object'
   title: string
   subtitle: string
 }

@@ -110,11 +110,24 @@ export async function getFaceMeta(): Promise<FaceMeta> {
 }
 
 /**
- * 遮蔽 URL 中的密码（rtsp://user:pass@host/… -> rtsp://user:***@host/…），
- * 供前端 console 日志使用，避免把摄像机凭据打进浏览器控制台。
+ * 遮蔽 URL 中的敏感信息（供前端日志与只读展示使用，避免把摄像机凭据打进
+ * 浏览器控制台或直接显示在界面上）。
+ *
+ * 1. 用户信息：rtsp://user:pass@host/… -> rtsp://user:******@host/…
+ *    （用户名保留、密码替换为 ``******``；无密码的裸 ``user@`` 也一并遮蔽）。
+ * 2. 查询参数中的敏感键：?token=… / ?password=… / ?pass=… / ?key=… / ?auth=…
+ *    -> 值替换为 ``******``。
+ *
+ * 仅用于「展示/日志」；首次输入配置（CameraEditorModal）直接编辑原始 URL，
+ * 因此不受影响。
  */
-function redactUrl(url: string): string {
-  return url.replace(/(\/\/[^/@:]+):([^@]*)@/g, '$1:***@')
+export function redactUrl(url: string): string {
+  if (!url) return url
+  let out = url.replace(/(\/\/[^/@:]*):([^@]*)@/g, (_m, user: string, _pass: string) => `${user}:******@`)
+  out = out.replace(/(\/\/[^/@]+)@/g, '$1:******@')
+  // 查询参数中的敏感键值
+  out = out.replace(/([?&](?:token|password|pass|key|auth|access[_-]?key|secret))=([^&#]*)/gi, '$1=******')
+  return out
 }
 
 /**
@@ -632,6 +645,7 @@ export async function clearRoi(scriptId: string, camera: string): Promise<void> 
 export interface GateConfigInfo {
   id?: number
   camera_id: string
+  script_id: string
   gate_id: string
   location: string
   line_start_x: number
@@ -653,9 +667,10 @@ export interface GateReport {
   baseline_assumption: string
 }
 
-export async function listGateConfigs(cameraId?: string): Promise<GateConfigInfo[]> {
+export async function listGateConfigs(cameraId?: string, scriptId?: string): Promise<GateConfigInfo[]> {
   const q = new URLSearchParams()
   if (cameraId) q.set('camera_id', cameraId)
+  if (scriptId) q.set('script_id', scriptId)
   const qs = q.toString()
   const res = await fetch(`${BASE_URL}/api/gates/config${qs ? `?${qs}` : ''}`)
   const data = await handle<{ gates: GateConfigInfo[] }>(res)
@@ -664,6 +679,7 @@ export async function listGateConfigs(cameraId?: string): Promise<GateConfigInfo
 
 export async function saveGateConfig(gate: {
   camera_id: string
+  script_id?: string
   gate_id: string
   location: string
   line_start_x: number
@@ -675,7 +691,7 @@ export async function saveGateConfig(gate: {
   positive_role?: 'pedestrian' | 'vehicle'
   negative_role?: 'pedestrian' | 'vehicle'
 }): Promise<GateConfigInfo> {
-  console.log(`[api] saveGateConfig camera=${gate.camera_id} gate=${gate.gate_id} location=${gate.location}`)
+  console.log(`[api] saveGateConfig camera=${gate.camera_id} script=${gate.script_id} gate=${gate.gate_id} location=${gate.location}`)
   const res = await fetch(`${BASE_URL}/api/gates/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -685,10 +701,11 @@ export async function saveGateConfig(gate: {
   return data.gate
 }
 
-export async function deleteGateConfig(cameraId: string, gateId: string): Promise<void> {
-  console.log(`[api] deleteGateConfig camera=${cameraId} gate=${gateId}`)
+export async function deleteGateConfig(cameraId: string, gateId: string, scriptId?: string): Promise<void> {
+  console.log(`[api] deleteGateConfig camera=${cameraId} script=${scriptId} gate=${gateId}`)
+  const q = scriptId ? `?script_id=${encodeURIComponent(scriptId)}` : ''
   const res = await fetch(
-    `${BASE_URL}/api/gates/config/${encodeURIComponent(cameraId)}/${encodeURIComponent(gateId)}`,
+    `${BASE_URL}/api/gates/config/${encodeURIComponent(cameraId)}/${encodeURIComponent(gateId)}${q}`,
     { method: 'DELETE' },
   )
   await handle(res)

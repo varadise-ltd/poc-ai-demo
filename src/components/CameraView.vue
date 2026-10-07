@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { listCameras as apiListCameras } from '../api'
+import { listCameras as apiListCameras, redactUrl } from '../api'
 import {
   addCameraAIRecord,
   cameraRun,
@@ -250,7 +250,7 @@ onMounted(async () => {
                   {{ cam.status === 'online' ? 'Connected' : 'Offline' }}
                 </span>
               </div>
-              <span>{{ cam.rtmp }}</span>
+              <span :title="redactUrl(cam.rtmp)">{{ redactUrl(cam.rtmp) }}</span>
               <span v-if="cam.organization || cam.org_admin" class="subtitle">
                 {{ cam.organization || '—' }} · {{ cam.org_admin || '—' }}
               </span>

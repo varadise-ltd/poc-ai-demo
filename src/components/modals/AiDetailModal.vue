@@ -562,6 +562,16 @@ function arrowTail(line: GateLineLocal): [number, number] {
   return [mx - nx * len * 0.4, my - ny * len * 0.4]
 }
 
+/** 边界线左右侧标识 R / L 文字的位置（R = 右侧/positive，L = 左侧/negative）。 */
+function boundarySideLabels(line: GateLineLocal): { r: [number, number]; l: [number, number] } {
+  const { nx, ny, mx, my } = arrowVector(line)
+  const offset = 30
+  return {
+    r: [mx + nx * offset, my + ny * offset],
+    l: [mx - nx * offset, my - ny * offset],
+  }
+}
+
 function flipGateLine(index: number): void {
   gateLines.value = gateLines.value.map((line, i) =>
     i === index ? { ...line, arrowSign: (line.arrowSign === 1 ? -1 : 1) as 1 | -1 } : line,
@@ -583,7 +593,7 @@ async function removeGateLine(index: number): Promise<void> {
   gateLines.value = gateLines.value.filter((_, i) => i !== index)
   if (line?.saved) {
     try {
-      await deleteGateConfig(cameraName.value, line.gateId)
+      await deleteGateConfig(cameraName.value, line.gateId, script.value?.id ?? '')
       roiStatus.value = `Line "${line.gateId}" deleted from backend & database.`
     } catch (err) {
       roiStatus.value = roiErrorMessage(err)
@@ -597,7 +607,7 @@ async function loadGateLines(): Promise<void> {
   if (!isCountingScript.value || !cameraName.value) return
   gateLoading.value = true
   try {
-    const gates = await listGateConfigs(cameraName.value)
+    const gates = await listGateConfigs(cameraName.value, script.value?.id ?? '')
     gateLines.value = gates
       .filter((g) => g.enabled)
       .map((g) => ({
@@ -636,6 +646,7 @@ async function saveGateLines(): Promise<void> {
     for (const line of gateLines.value) {
       const gate = await saveGateConfig({
         camera_id: cameraName.value,
+        script_id: script.value?.id ?? '',
         gate_id: line.gateId,
         location: line.location || line.gateId,
         line_start_x: line.start[0] / roiNaturalW.value,
@@ -653,8 +664,10 @@ async function saveGateLines(): Promise<void> {
         start: line.start,
         end: line.end,
         arrowSign: gate.arrow_sign === -1 ? -1 : 1,
-        positiveRole: gate.positive_role === 'vehicle' ? 'vehicle' : 'pedestrian',
-        negativeRole: gate.negative_role === 'pedestrian' ? 'pedestrian' : 'vehicle',
+        // Prefer the operator's explicit choice so a save never visually
+        // reverts, even if the backend response omits the role columns.
+        positiveRole: line.positiveRole,
+        negativeRole: line.negativeRole,
         saved: true,
       })
     }
@@ -1030,6 +1043,25 @@ onBeforeUnmount(() => {
                   >
                     {{ isSegregationScript ? `Right: ${line.positiveRole} · Left: ${line.negativeRole}` : (line.location || line.gateId) }}
                   </text>
+                  <!-- 边界线左右侧标识：R = 右侧（positive），L = 左侧（negative）。 -->
+                  <template v-if="isSegregationScript">
+                    <text
+                      :x="boundarySideLabels(line).r[0]"
+                      :y="boundarySideLabels(line).r[1]"
+                      text-anchor="middle"
+                      class="gate-arrow-label side-r"
+                    >
+                      R
+                    </text>
+                    <text
+                      :x="boundarySideLabels(line).l[0]"
+                      :y="boundarySideLabels(line).l[1]"
+                      text-anchor="middle"
+                      class="gate-arrow-label side-l"
+                    >
+                      L
+                    </text>
+                  </template>
                   <circle
                     :cx="line.start[0]" :cy="line.start[1]" r="8"
                     class="roi-point gate-endpoint"
