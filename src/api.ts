@@ -117,9 +117,27 @@ function redactUrl(url: string): string {
   return url.replace(/(\/\/[^/@:]+):([^@]*)@/g, '$1:***@')
 }
 
+/**
+ * Correlation id for one UI action, sent as ``X-Request-ID``.
+ *
+ * The backend request-logging middleware reuses a caller-provided
+ * ``X-Request-ID``, so the browser line and the backend ``-->`` / ``<--`` lines
+ * (plus every business log emitted while handling it) carry the same id. That is
+ * what makes a single Run click traceable end to end.
+ */
+function newRequestId(action: string, scriptId: string, camera?: string): string {
+  const suffix =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID().slice(0, 8)
+      : Date.now().toString(36)
+  return `ui-${action}-${scriptId}-${camera ? camera.replace(/\s+/g, '_') : 'all'}-${suffix}`
+}
+
 async function handle<T>(res: Response): Promise<T> {
-  // 统一记录每一次后端 API 请求的响应状态，便于在浏览器控制台排障
-  console.log(`[api] ${res.status} ${redactUrl(res.url)}`)
+  // 统一记录每一次后端 API 请求的响应状态，便于在浏览器控制台排障。
+  // requestId 由后端 request-logging 中间件回填，可与后端日志逐条对应。
+  const requestId = res.headers.get('X-Request-ID')
+  console.log(`[api] ${res.status} ${redactUrl(res.url)}${requestId ? ` requestId=${requestId}` : ''}`)
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -392,17 +410,24 @@ export async function updateScriptMeta(
 }
 
 export async function runScript(id: string, camera?: string): Promise<ScriptRun> {
+  const requestId = newRequestId('run', id, camera)
+  console.log(`[run] AI model run requested: script=${id} camera=${camera ?? 'all'} requestId=${requestId}`)
   const res = await fetch(`${BASE_URL}/api/scripts/${id}/run`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Request-ID': requestId },
     body: JSON.stringify({ camera }),
   })
   return handle<ScriptRun>(res)
 }
 
 export async function stopScript(id: string, camera?: string): Promise<ScriptRun> {
+  const requestId = newRequestId('stop', id, camera)
+  console.log(`[run] AI model stop requested: script=${id} camera=${camera ?? 'all'} requestId=${requestId}`)
   const query = camera ? `?camera=${encodeURIComponent(camera)}` : ''
-  const res = await fetch(`${BASE_URL}/api/scripts/${id}/stop${query}`, { method: 'POST' })
+  const res = await fetch(`${BASE_URL}/api/scripts/${id}/stop${query}`, {
+    method: 'POST',
+    headers: { 'X-Request-ID': requestId },
+  })
   return handle<ScriptRun>(res)
 }
 
@@ -455,19 +480,53 @@ export async function unassignScriptCamera(scriptId: string, camera: string): Pr
 }
 
 export async function runScriptCamera(scriptId: string, camera: string): Promise<CameraModelRun> {
-  const res = await fetch(
-    `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/run`,
-    { method: 'POST' },
-  )
-  return handle<CameraModelRun>(res)
+  const requestId = newRequestId('run', scriptId, camera)
+  const startedAt = performance.now()
+  console.log(`[run] AI model RUN requested: script=${scriptId} camera="${camera}" requestId=${requestId}`)
+  try {
+    const res = await fetch(
+      `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/run`,
+      { method: 'POST', headers: { 'X-Request-ID': requestId } },
+    )
+    const result = await handle<CameraModelRun>(res)
+    console.log(
+      `[run] AI model RUN started: script=${scriptId} camera="${camera}" status=${result.status} ` +
+        `cameraStatus=${result.camera_status} mode=${result.mode} elapsed=${(performance.now() - startedAt).toFixed(0)}ms requestId=${requestId}`,
+    )
+    return result
+  } catch (err) {
+    // The refusal reason (offline camera, no count line, worker died) matters
+    // for support: log it with the correlation id before rethrowing to the UI.
+    console.error(
+      `[run] AI model RUN failed: script=${scriptId} camera="${camera}" elapsed=${(performance.now() - startedAt).toFixed(0)}ms ` +
+        `requestId=${requestId} error=${err instanceof Error ? err.message : String(err)}`,
+    )
+    throw err
+  }
 }
 
 export async function stopScriptCamera(scriptId: string, camera: string): Promise<CameraModelRun> {
-  const res = await fetch(
-    `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/stop`,
-    { method: 'POST' },
-  )
-  return handle<CameraModelRun>(res)
+  const requestId = newRequestId('stop', scriptId, camera)
+  const startedAt = performance.now()
+  console.log(`[run] AI model STOP requested: script=${scriptId} camera="${camera}" requestId=${requestId}`)
+  try {
+    const res = await fetch(
+      `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/stop`,
+      { method: 'POST', headers: { 'X-Request-ID': requestId } },
+    )
+    const result = await handle<CameraModelRun>(res)
+    console.log(
+      `[run] AI model STOP done: script=${scriptId} camera="${camera}" status=${result.status} ` +
+        `elapsed=${(performance.now() - startedAt).toFixed(0)}ms requestId=${requestId}`,
+    )
+    return result
+  } catch (err) {
+    console.error(
+      `[run] AI model STOP failed: script=${scriptId} camera="${camera}" elapsed=${(performance.now() - startedAt).toFixed(0)}ms ` +
+        `requestId=${requestId} error=${err instanceof Error ? err.message : String(err)}`,
+    )
+    throw err
+  }
 }
 
 export async function stopAllScripts(): Promise<void> {

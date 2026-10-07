@@ -43,10 +43,25 @@ function isRunning(id: string): boolean {
 // Per-camera Run/Stop. Each camera is an independent worker, so the response only
 // reflects that camera; a refusal (offline camera, missing weights) surfaces the
 // backend reason and the row keeps the last known state.
+//
+// Every click is logged with the AI model id/name + camera + elapsed time so the
+// console line and the backend request log (same requestId) can be matched when
+// tracking which model/camera was started and when.
 async function onToggleCameraRun(scriptId: string, camera: string): Promise<void> {
+  const scriptName = store.scripts.find((s) => s.id === scriptId)?.name ?? scriptId
+  const startedAt = performance.now()
+  console.log(`[ui] Run/Stop clicked: model="${scriptName}" (${scriptId}) camera="${camera}"`)
   try {
     await toggleCameraRun(scriptId, camera)
+    console.log(
+      `[ui] Run/Stop finished: model="${scriptName}" (${scriptId}) camera="${camera}" ` +
+        `elapsed=${(performance.now() - startedAt).toFixed(0)}ms`,
+    )
   } catch (err) {
+    console.error(
+      `[ui] Run/Stop failed: model="${scriptName}" (${scriptId}) camera="${camera}" ` +
+        `elapsed=${(performance.now() - startedAt).toFixed(0)}ms error=${err instanceof Error ? err.message : String(err)}`,
+    )
     alert(err instanceof Error ? err.message : String(err))
     await loadScriptCameraRuns(scriptId)
   }

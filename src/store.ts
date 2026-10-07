@@ -288,11 +288,20 @@ export async function loadAllCameraRuns(): Promise<void> {
 /** Start or stop exactly one camera of one AI model. */
 export async function toggleCameraRun(scriptId: string, camera: string): Promise<void> {
   const current = cameraRun(scriptId, camera)
+  const action = current.status === 'running' ? 'STOP' : 'RUN'
+  console.log(
+    `[run] toggle ${action}: script=${scriptId} camera="${camera}" status=${current.status} ` +
+      `cameraStatus=${current.camera_status} canRun=${current.can_run} enabled=${current.enabled}`,
+  )
   const result =
     current.status === 'running'
       ? await api.stopScriptCamera(scriptId, camera)
       : await api.runScriptCamera(scriptId, camera)
   store.cameraRuns[cameraRunKey(scriptId, camera)] = result
+  console.log(
+    `[run] toggle ${action} result: script=${scriptId} camera="${camera}" status=${result.status} ` +
+      `health=${result.health}${result.message ? ` message="${result.message}"` : ''}`,
+  )
   syncScriptRunFromCameras(scriptId)
 }
 
