@@ -227,10 +227,15 @@ export async function stopSelectedScript(): Promise<void> {
  * reporting "running" for as long as the user leaves it on.
  */
 export async function refreshSelectedScriptRun(): Promise<void> {
-  if (!store.selectedScriptId) return
+  const scriptId = store.selectedScriptId
+  const camera = store.selectedCamera
+  if (!scriptId) return
   try {
-    const run = await api.getScriptStatus(store.selectedScriptId, store.selectedCamera)
-    store.scriptRuns[store.selectedScriptId] = { status: run.status, camera: run.camera }
+    const run = await api.getScriptStatus(scriptId, camera)
+    // The selection may have changed while a slow poll was in flight. Never
+    // apply its result to the newer model/camera selection.
+    if (store.selectedScriptId !== scriptId || store.selectedCamera !== camera) return
+    store.scriptRuns[scriptId] = { status: run.status, camera: run.camera }
     store.running = run.status === 'running'
   } catch {
     // Transient poll failure: keep the last known state.
@@ -271,9 +276,17 @@ export function scriptHasRunningCamera(scriptId: string): boolean {
 }
 
 /** Load the per-camera run states for one AI model. */
+const cameraRunRequestGeneration: Record<string, number> = {}
+
 export async function loadScriptCameraRuns(scriptId: string): Promise<void> {
+  const generation = (cameraRunRequestGeneration[scriptId] ?? 0) + 1
+  cameraRunRequestGeneration[scriptId] = generation
   try {
     const runs = await api.listScriptCameras(scriptId)
+    // Expanded model polling can overlap. Only the newest request may update
+    // the rows, otherwise an older stopped/running response can overwrite a
+    // later Run/Stop result.
+    if (cameraRunRequestGeneration[scriptId] !== generation) return
     for (const run of runs) store.cameraRuns[cameraRunKey(scriptId, run.camera)] = run
   } catch {
     // Keep previously known state; the row falls back to camera connectivity.
