@@ -490,8 +490,8 @@ function syncCameraMaps(): void {
   store.cameraStatus = status
 }
 
-export async function loadCameras(): Promise<void> {
-  store.cameraLoading = true
+export async function loadCameras(quiet = false): Promise<void> {
+  if (!quiet) store.cameraLoading = true
   store.cameraError = ''
   try {
     store.cameras = await api.listCameras()
@@ -499,7 +499,7 @@ export async function loadCameras(): Promise<void> {
   } catch (err) {
     store.cameraError = err instanceof Error ? err.message : String(err)
   } finally {
-    store.cameraLoading = false
+    if (!quiet) store.cameraLoading = false
   }
 }
 

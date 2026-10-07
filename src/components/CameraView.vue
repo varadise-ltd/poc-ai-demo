@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { listCameras as apiListCameras, redactUrl } from '../api'
 import {
   addCameraAIRecord,
@@ -190,11 +190,26 @@ async function onConfirmAddAi(payload: { scriptId: string; name: string; enabled
   }
 }
 
+// 摄像机状态定时刷新：后端会按 CAMERA_HEALTH_CHECK_INTERVAL（默认 5 分钟）探测
+// 每台摄像机的可达性并写回 online/offline，前端同步拉取，让「Connected / Offline」
+// 徽章无需手动刷新即可及时更新（失联时变灰显示 Offline）。
+const CAMERA_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+let cameraRefreshTimer: number | null = null
+
 onMounted(async () => {
   // The AI model catalog and the camera instances are two views of one relation,
   // so both (and the per-camera run states) are loaded together.
   await Promise.all([loadCameras(), loadScripts(), loadCameraAI()])
   await loadAllCameraRuns()
+
+  // 定时静默刷新：仅在停留在 Camera 页时拉取，避免后台无谓请求。
+  cameraRefreshTimer = window.setInterval(() => {
+    if (store.activeTab === 'camera') loadCameras(true)
+  }, CAMERA_REFRESH_INTERVAL_MS)
+})
+
+onBeforeUnmount(() => {
+  if (cameraRefreshTimer !== null) window.clearInterval(cameraRefreshTimer)
 })
 </script>
 
