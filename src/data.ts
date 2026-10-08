@@ -42,14 +42,14 @@ export const scripts: Script[] = [
     ],
     params: [
       {
-        key: 'FACE_DISTANCE_THRESHOLD',
-        label: 'Face Match Threshold',
-        value: 0.3,
+        key: 'FACE_MATCH_THRESHOLD',
+        label: 'Face Match Similarity',
+        value: 0.4,
         min: 0.1,
-        max: 0.8,
+        max: 0.9,
         step: 0.05,
         type: 'float',
-        description: 'Maximum distance to consider a face match (lower = stricter, better accuracy)',
+        description: 'Cosine similarity to consider a face match (higher = stricter)',
       },
       {
         key: 'ALERT_COOLDOWN',

@@ -50,10 +50,6 @@ watch(
         <p class="subtitle">
           Add, edit and manage registered face data. Active embedding:
           <strong>{{ store.faceMeta?.active_dim ?? '—' }}-d</strong>
-          <span v-if="store.faceMeta">
-            (128-d: {{ store.faceMeta.available['128'] ? 'ready' : 'missing' }} ·
-            512-d: {{ store.faceMeta.available['512'] ? 'ready' : 'missing' }})
-          </span>
         </p>
         <button class="btn primary" @click="addFace">+ Add face data</button>
       </div>
@@ -76,7 +72,6 @@ watch(
           <div class="face-identity">
             <img class="face-avatar" :src="face.image" :alt="`${face.name} avatar`" />
             <button class="face-link" @click="editFace(face.id)">{{ face.name }}</button>
-            <span class="pill" :class="{ gray: !face.hasEmbedding }">128d{{ face.hasEmbedding ? ' ✓' : ' ✗' }}</span>
             <span class="pill" :class="{ gray: !face.hasEmbedding512 }">512d{{ face.hasEmbedding512 ? ' ✓' : ' ✗' }}</span>
             <span v-if="face.faceCount !== undefined" class="subtitle">{{ face.faceCount }} face(s) · {{ face.width }}×{{ face.height }}</span>
           </div>
