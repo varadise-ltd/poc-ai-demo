@@ -9,6 +9,7 @@ const defaultDashboards: DashboardDefinition[] = [
   { id: 'inout', title: 'In / Out', subtitle: 'People Counting' },
   { id: 'ppe', title: 'PPE detection', subtitle: 'PPE detection' },
   { id: 'object', title: 'Object detection', subtitle: 'Human detection' },
+  { id: 'segregation', title: 'Pedestrian / Vehicle', subtitle: 'Segregation' },
 ]
 
 const dashboards = ref<DashboardDefinition[]>(defaultDashboards)
@@ -51,6 +52,7 @@ const descriptions: Record<string, string> = {
   inout: 'People crossing configured count lines (add-line + direction), per line.',
   ppe: 'People not meeting PPE requirements, with per-violation detail.',
   object: 'Humans detected by the Human detection AI model, with per-detection detail.',
+  segregation: 'People and vehicles detected by the Pedestrian / Vehicle Segregation AI model, with per-detection counts.',
 }
 let requestId = 0
 const people = computed(() => {
@@ -154,6 +156,7 @@ function formatTime(value: string): string {
 
 function statusLabel(record: DashboardQueryResult['records'][number]): string {
   if (record.direction) return record.direction.toUpperCase()
+  if (record.category === 'segregation') return record.status === 'pedestrian' ? 'Person' : 'Vehicle'
   if (record.violations.length) return record.violations.join(', ')
   return record.status
 }

@@ -778,20 +778,34 @@ export interface GateRoiPeople {
   total: number
 }
 
+/** Cumulative vehicles seen inside the ROI (now / session / day / all-time). */
+export interface GateRoiVehicles {
+  now: number
+  session: number
+  day: number
+  total: number
+}
+
 /** Live people-counting readout for the preview panel. */
 export interface GateLiveInfo {
   camera_id: string
   script_id: string | null
   running: boolean
+  /** Pedestrian / Vehicle Segregation: static boundary, no IN/OUT semantics. */
+  is_segregation: boolean
   mode: string
   roi_configured: boolean
   /** People detected inside the drawn ROI on the worker's latest frame. */
   people_in_roi: number
+  /** Vehicles detected inside the drawn ROI on the worker's latest frame. */
+  vehicles_in_roi: number
   detections: number
   run_id: string | null
   updated_at: string | null
   /** Cumulative ROI people count, backed by the durable presence facts. */
   roi_people: GateRoiPeople
+  /** Cumulative ROI vehicle count, backed by the durable presence facts. */
+  roi_vehicles: GateRoiVehicles
   session: GateLiveTotals
   day: GateLiveTotals & { start: string; end: string }
   lines: GateLiveLine[]

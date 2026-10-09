@@ -182,6 +182,8 @@ function stopPolling(): void {
 const gateLive = ref<GateLiveInfo | null>(null)
 const gateLiveError = ref('')
 const isCountingScript = computed(() => selectedScript.value?.isCounting === true)
+// Pedestrian / Vehicle Segregation：静态分界线，无 IN/OUT 语义，只统计人员/交通工具数量。
+const isSegregation = computed(() => selectedScript.value?.isSegregation === true)
 const roiPeopleLabel = computed(() => (gateLive.value?.roi_configured ? 'People in ROI (now)' : 'People (now, whole frame)'))
 
 // ---------------------------------------------------------------------------
@@ -576,34 +578,52 @@ onBeforeUnmount(() => {
                 <span class="gate-live-label">{{ roiPeopleLabel }}</span>
                 <strong class="gate-live-value">{{ gateLive.roi_people.now }}</strong>
               </div>
+              <div class="gate-live-stat" v-if="isSegregation">
+                <span class="gate-live-label">Vehicles (now)</span>
+                <strong class="gate-live-value">{{ gateLive.roi_vehicles.now }}</strong>
+              </div>
               <div class="gate-live-stat">
-                <span class="gate-live-label">People in ROI (this run)</span>
+                <span class="gate-live-label">{{ isSegregation ? 'People (this run)' : 'People in ROI (this run)' }}</span>
                 <strong class="gate-live-value">{{ gateLive.roi_people.session }}</strong>
+              </div>
+              <div class="gate-live-stat" v-if="isSegregation">
+                <span class="gate-live-label">Vehicles (this run)</span>
+                <strong class="gate-live-value">{{ gateLive.roi_vehicles.session }}</strong>
               </div>
               <div class="gate-live-stat">
                 <span class="gate-live-label">People today (cumulative)</span>
                 <strong class="gate-live-value">{{ gateLive.roi_people.day }}</strong>
               </div>
+              <div class="gate-live-stat" v-if="isSegregation">
+                <span class="gate-live-label">Vehicles today (cumulative)</span>
+                <strong class="gate-live-value">{{ gateLive.roi_vehicles.day }}</strong>
+              </div>
               <div class="gate-live-stat">
                 <span class="gate-live-label">People total (cumulative)</span>
                 <strong class="gate-live-value">{{ gateLive.roi_people.total }}</strong>
               </div>
-              <div class="gate-live-stat">
-                <span class="gate-live-label">IN (this run)</span>
-                <strong class="gate-live-value in">{{ gateLive.session.in }}</strong>
+              <div class="gate-live-stat" v-if="isSegregation">
+                <span class="gate-live-label">Vehicles total (cumulative)</span>
+                <strong class="gate-live-value">{{ gateLive.roi_vehicles.total }}</strong>
               </div>
-              <div class="gate-live-stat">
-                <span class="gate-live-label">OUT (this run)</span>
-                <strong class="gate-live-value out">{{ gateLive.session.out }}</strong>
-              </div>
-              <div class="gate-live-stat">
-                <span class="gate-live-label">IN / OUT today</span>
-                <strong class="gate-live-value">
-                  {{ gateLive.day.in }} / {{ gateLive.day.out }}
-                </strong>
-              </div>
+              <template v-if="!isSegregation">
+                <div class="gate-live-stat">
+                  <span class="gate-live-label">IN (this run)</span>
+                  <strong class="gate-live-value in">{{ gateLive.session.in }}</strong>
+                </div>
+                <div class="gate-live-stat">
+                  <span class="gate-live-label">OUT (this run)</span>
+                  <strong class="gate-live-value out">{{ gateLive.session.out }}</strong>
+                </div>
+                <div class="gate-live-stat">
+                  <span class="gate-live-label">IN / OUT today</span>
+                  <strong class="gate-live-value">
+                    {{ gateLive.day.in }} / {{ gateLive.day.out }}
+                  </strong>
+                </div>
+              </template>
             </div>
-            <div v-if="gateLive.lines.length" class="gate-live-lines">
+            <div v-if="!isSegregation && gateLive.lines.length" class="gate-live-lines">
               <div v-for="line in gateLive.lines" :key="line.gate_id" class="gate-live-line">
                 <span class="gate-live-line-name">{{ line.location || line.gate_id }}</span>
                 <span class="gate-live-line-dir">
@@ -613,11 +633,14 @@ onBeforeUnmount(() => {
                 </span>
               </div>
             </div>
-            <p class="subtitle">
+            <p v-if="!isSegregation" class="subtitle">
               IN = crossing along the drawn arrow (OUT → IN), OUT = crossing against it.
               Counts come from the same facts as the stored report.
             </p>
-            <p v-if="crossLineHint" class="subtitle" style="color: var(--yellow, #d29922)">
+            <p v-else class="subtitle">
+              People and vehicles are counted as they appear in view (cumulative per run / today / all-time).
+            </p>
+            <p v-if="!isSegregation && crossLineHint" class="subtitle" style="color: var(--yellow, #d29922)">
               {{ gateLive.roi_people.session }} person(s) were detected inside the ROI this run, but
               nobody has crossed a count line yet. A line can only count a passage when a person’s
               box centre travels from one side of it to the other — redraw the line across the
@@ -629,7 +652,7 @@ onBeforeUnmount(() => {
             Waiting for the running worker to report its first frame…
           </p>          <p v-else class="subtitle">
             {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the
-            AI model page, then the ROI people count and IN/OUT totals will appear here.
+            AI model page, then the ROI people/vehicle counts{{ isSegregation ? '' : ' and IN/OUT totals' }} will appear here.
           </p>
         </div>
 
