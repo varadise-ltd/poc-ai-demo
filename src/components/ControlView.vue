@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { listScripts as apiListScripts, redactUrl } from '../api'
 import {
   addStreamCamera,
@@ -100,14 +100,31 @@ function cameraRunTitle(scriptId: string, camera: string): string {
 
 // Poll the run state of every expanded AI model so a worker that exits on its own
 // (unreachable camera, model that failed to load) is reflected without a reload.
+// 仅在「有展开行」时才轮询：无展开行时完全停止 timer，不产生任何后台请求。
 let pollTimer: number | null = null
 
 async function refreshExpandedCameraRuns(): Promise<void> {
+  // 仅在 AI model 页可见时轮询：切到其他 tab（v-show 常驻挂载）后台不发请求。
+  if (store.activeTab !== 'model') return
   const ids = Object.entries(controlExpanded.value)
     .filter(([, expanded]) => expanded)
     .map(([id]) => id)
+  if (!ids.length) return
   await Promise.all(ids.map((id) => loadScriptCameraRuns(id)))
 }
+
+function syncPollTimer(): void {
+  const hasExpanded = Object.values(controlExpanded.value).some(Boolean)
+  if (hasExpanded && pollTimer === null) {
+    pollTimer = window.setInterval(refreshExpandedCameraRuns, 5000)
+  } else if (!hasExpanded && pollTimer !== null) {
+    window.clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+// 展开/收起任意 AI model 行时，按需启动或停止轮询 timer。
+watch(controlExpanded, syncPollTimer)
 
 /** Assign a camera to this AI model (persisted; the Camera page sees it too). */
 async function onAddStreamCamera(scriptId: string): Promise<void> {
@@ -262,7 +279,8 @@ onMounted(async () => {
   await loadAllCameraRuns()
   // Keeps the "Deleted (n)" badge honest before the restore panel is ever opened.
   await loadDeletedScripts()
-  pollTimer = window.setInterval(refreshExpandedCameraRuns, 3000)
+  // 只有存在展开行时才启动轮询；无展开行不产生任何后台请求。
+  syncPollTimer()
 })
 
 onBeforeUnmount(() => {

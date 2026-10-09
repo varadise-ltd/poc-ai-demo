@@ -140,28 +140,38 @@ async function loadPreviewHistory(): Promise<void> {
 }
 
 /**
- * Always-on poll of the engine's run state, detection events, and counting stats.
- *
- * The run state must be re-read even when this page currently believes the AI
- * model is stopped: a worker can be running because it was started elsewhere
- * (AI model page) or by an earlier visit, and only the engine knows. Polling
- * conditionally on ``isRunning`` created a deadlock — the page stayed on
- * "stopped" and never re-checked, so a running camera showed no preview.
+ * 轮询只保留两类必要请求：
+ * 1. 永远需要：探测 run 状态（worker 可能在别处被启动/停止，Preview 按钮要跟上）。
+ * 2. 仅在真正预览时才需要：实时统计（检测事件 / 计数 / 人脸）。
+ * 未 preview 时用低频间隔，只查 run 状态，不拉实时统计。
  */
+const LIVE_POLL_MS = 5000
+const IDLE_POLL_MS = 15000
+
 async function pollTick(): Promise<void> {
+  // 仅在 Live 页可见时轮询：切到其他 tab（v-show 常驻挂载）后台不发请求。
+  if (store.activeTab !== 'demo') return
   await refreshSelectedScriptRun()
-  if (!isRunning.value) return
+  // 实时统计只在真正预览时才需要，未 preview 时不拉，避免无谓轮询。
+  if (!isRunning.value || !previewing.value) return
   void loadDetectionEvents()
   void loadGateLive()
   void loadFaceLive()
   if (isCountingScript.value && !store.historyEvents.length) void loadPreviewHistory()
 }
 
-function startPolling(): void {
+function restartPollTimer(): void {
   if (pollTimer) window.clearInterval(pollTimer)
-  void pollTick()
-  pollTimer = window.setInterval(() => void pollTick(), 2000)
+  pollTimer = window.setInterval(() => void pollTick(), previewing.value ? LIVE_POLL_MS : IDLE_POLL_MS)
 }
+
+function startPolling(): void {
+  restartPollTimer()
+  void pollTick()
+}
+
+// 预览开关切换时调整轮询节奏：预览中高频（5s），未预览低频（15s）。
+watch(previewing, () => restartPollTimer())
 
 function stopPolling(): void {
   if (pollTimer) {
