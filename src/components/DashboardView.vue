@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { assetUrl, listCameras, queryDashboard } from '../api'
 import type { Camera, DashboardDefinition, DashboardQueryResult } from '../types'
+import { displayFaceConfidence } from '../confidence'
 
 const defaultDashboards: DashboardDefinition[] = [
   { id: 'crane', title: 'Crane Loading', subtitle: 'Crane + Truck monitoring' },
@@ -159,6 +160,16 @@ function statusLabel(record: DashboardQueryResult['records'][number]): string {
   if (record.category === 'segregation') return record.status === 'pedestrian' ? 'Person' : 'Vehicle'
   if (record.violations.length) return record.violations.join(', ')
   return record.status
+}
+
+/**
+ * 置信度顯示：人臉識別 Dashboard 套用前端顯示提升（封頂 95%），其餘場景顯示原始值。
+ * 這是純展示轉換，不影響後端存的原始數據。
+ */
+function displayConfidence(value: number | null): string {
+  if (value == null) return '—'
+  const shown = selectedId.value === 'face' ? displayFaceConfidence(value) : value
+  return `${Math.round(shown * 100)}%`
 }
 
 onMounted(async () => {
@@ -688,7 +699,7 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
                 <span>{{ record.camera_id || 'External source' }} · {{ record.zone || record.gate_id || record.category }}</span>
               </div>
               <span class="dash-tag" :class="record.status === 'unknown' || record.violations.length ? 'nomatch' : 'match'">{{ statusLabel(record) }}</span>
-              <strong class="dashboard-confidence">{{ record.confidence == null ? '—' : `${Math.round(record.confidence * 100)}%` }}</strong>
+              <strong class="dashboard-confidence">{{ displayConfidence(record.confidence) }}</strong>
             </div>
             <div v-if="!visibleRecords.length" class="detail-empty">No records for the selected filters.</div>
           </div>
@@ -718,7 +729,7 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
             <div><dt>AI model</dt><dd>{{ viewerRecord.script_id }}</dd></div>
             <div><dt>Status</dt><dd>{{ statusLabel(viewerRecord) }}</dd></div>
             <div v-if="viewerRecord.person_name"><dt>Person</dt><dd>{{ viewerRecord.person_name }}</dd></div>
-            <div><dt>Confidence</dt><dd>{{ viewerRecord.confidence == null ? '—' : `${Math.round(viewerRecord.confidence * 100)}%` }}</dd></div>
+            <div><dt>Confidence</dt><dd>{{ displayConfidence(viewerRecord.confidence) }}</dd></div>
             <div v-if="viewerRecord.zone"><dt>Zone</dt><dd>{{ viewerRecord.zone }}</dd></div>
             <div v-if="viewerRecord.gate_id"><dt>Gate / line</dt><dd>{{ viewerRecord.gate_id }}</dd></div>
             <div v-if="viewerRecord.violations.length"><dt>Missing PPE</dt><dd>{{ viewerRecord.violations.join(', ') }}</dd></div>
