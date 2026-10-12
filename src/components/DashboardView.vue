@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { assetUrl, listCameras, queryDashboard } from '../api'
 import type { Camera, DashboardDefinition, DashboardQueryResult } from '../types'
-import { displayFaceConfidence } from '../confidence'
+import { formatDisplayConfidence } from '../confidence'
 
 const defaultDashboards: DashboardDefinition[] = [
   { id: 'crane', title: 'Crane Loading', subtitle: 'Crane + Truck monitoring' },
@@ -163,13 +163,10 @@ function statusLabel(record: DashboardQueryResult['records'][number]): string {
 }
 
 /**
- * 置信度顯示：人臉識別 Dashboard 套用前端顯示提升（封頂 95%），其餘場景顯示原始值。
- * 這是純展示轉換，不影響後端存的原始數據。
+ * 置信度顯示：所有 dashboard 均直接使用後端統一的顯示值。
  */
 function displayConfidence(value: number | null): string {
-  if (value == null) return '—'
-  const shown = selectedId.value === 'face' ? displayFaceConfidence(value) : value
-  return `${Math.round(shown * 100)}%`
+  return formatDisplayConfidence(value)
 }
 
 onMounted(async () => {

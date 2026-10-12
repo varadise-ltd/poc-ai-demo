@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { getFaceLive, getGateLive, listCameras, listScripts, snapshotUrl, streamUrl } from '../api'
 import type { FaceLiveInfo, GateLiveInfo } from '../api'
 import type { Camera, EventItem, Script } from '../types'
-import { displayFaceConfidence } from '../confidence'
+import { formatDisplayConfidence } from '../confidence'
 import {
   clearEvents,
   loadCameraAI,
@@ -695,7 +695,7 @@ onBeforeUnmount(() => {
               <div v-for="p in faceLive.people" :key="p.name" class="gate-live-line">
                 <span class="gate-live-line-name">{{ p.name }}</span>
                 <span class="gate-live-line-dir">
-                  <span class="in">{{ (displayFaceConfidence(p.confidence) * 100).toFixed(1) }}%</span>
+                  <span class="in">{{ formatDisplayConfidence(p.confidence) }}</span>
                   <span v-if="p.count" class="subtitle">×{{ p.count }}</span>
                   <span v-if="p.last_seen_at" class="subtitle">{{ formatDetectedAt(p.last_seen_at) }}</span>
                 </span>
