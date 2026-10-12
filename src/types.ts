@@ -109,6 +109,8 @@ export interface Camera {
   rotate?: string
   organization?: string
   org_admin?: string
+  /** Soft-deleted cameras are hidden from normal camera lists. */
+  deleted?: boolean
   createdAt?: string
   updatedAt?: string
 }

@@ -147,7 +147,7 @@ function addCamera(): void {
 }
 
 async function removeCamera(cam: Camera): Promise<void> {
-  if (!window.confirm(`Remove "${cam.name}"? This cannot be undone.`)) return
+  if (!window.confirm(`Soft-delete "${cam.name}"? Its AI-model and ROI configuration will be retained for later restore.`)) return
   try {
     await removeCameraRecord(cam.id)
     resetCameraFilter()

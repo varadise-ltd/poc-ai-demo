@@ -248,6 +248,7 @@ interface CameraRecord {
   rotate?: string
   organization?: string
   org_admin?: string
+  deleted?: boolean
   created_at?: string
   updated_at?: string
 }
@@ -262,6 +263,7 @@ function toCamera(r: CameraRecord): Camera {
     rotate: r.rotate,
     organization: r.organization,
     org_admin: r.org_admin,
+    deleted: r.deleted,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }
