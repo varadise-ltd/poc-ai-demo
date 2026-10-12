@@ -606,14 +606,14 @@ export async function loadFaces(quiet = false): Promise<void> {
 // 512d 向量在後端同步計算：add/update 接口回傳時 has_embedding_512 已是終值，
 // 不再需要前台輪詢等待後台補算（舊版的 defer_512 已移除）。
 
-export async function addFaceRecord(name: string, file: File): Promise<FaceValidation | undefined> {
-  const { face, validation } = await api.createFace(name, file)
+export async function addFaceRecord(name: string, images: { file: File; angle: string }[]): Promise<FaceValidation | undefined> {
+  const { face, validation } = await api.createFace(name, images)
   store.faceData.unshift(face)
   return validation
 }
 
-export async function updateFaceRecord(id: number, name?: string, file?: File): Promise<FaceValidation | undefined> {
-  const { face, validation } = await api.updateFace(id, name, file)
+export async function updateFaceRecord(id: number, name?: string, images?: { file: File; angle: string }[]): Promise<FaceValidation | undefined> {
+  const { face, validation } = await api.updateFace(id, name, images)
   const idx = store.faceData.findIndex((f) => f.id === id)
   if (idx >= 0) store.faceData.splice(idx, 1, face)
   return validation

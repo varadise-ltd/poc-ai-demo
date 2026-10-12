@@ -14,7 +14,7 @@ Five tabs:
 | **Camera** | Camera setting: register/edit/delete raw cameras and per-camera AI model instances |
 | **AI model** | AI-model catalog: run/stop (all or per camera), per-camera assignment, detection parameters, KPI facts, add/delete with a restore panel for soft-deleted models |
 | **Dashboard** | Backend analytics dashboards (Face Recognition, In / Out, PPE detection, Object detection) |
-| **Face management** | Registered face data with dual 128-d / 512-d embeddings |
+| **Face management** | Registered face data with 512-d ArcFace embeddings |
 
 The AI-model catalog (names, descriptions, parameters, KPI facts), cameras, faces, ROI regions,
 gate/dashboard analytics and alerts all come from the backend service (`poc-ai-service`);

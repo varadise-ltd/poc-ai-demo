@@ -73,6 +73,7 @@ watch(
             <img class="face-avatar" :src="face.image" :alt="`${face.name} avatar`" />
             <button class="face-link" @click="editFace(face.id)">{{ face.name }}</button>
             <span class="pill" :class="{ gray: !face.hasEmbedding512 }">512d{{ face.hasEmbedding512 ? ' ✓' : ' ✗' }}</span>
+            <span v-if="face.embeddings && face.embeddings.length" class="pill">{{ face.embeddings.length }} angle{{ face.embeddings.length > 1 ? 's' : '' }}</span>
             <span v-if="face.faceCount !== undefined" class="subtitle">{{ face.faceCount }} face(s) · {{ face.width }}×{{ face.height }}</span>
           </div>
           <div class="row-actions">

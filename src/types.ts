@@ -59,6 +59,14 @@ export interface HistoryEvent extends EventItem {
   date: string
 }
 
+export interface FaceEmbedding {
+  id: number
+  angle: string
+  imageName: string
+  image: string
+  hasEmbedding512?: boolean
+}
+
 export interface FaceData {
   id: number
   name: string
@@ -69,6 +77,8 @@ export interface FaceData {
   width?: number
   height?: number
   faceCount?: number
+  /** Multi-angle embeddings (front / left / right / down …). */
+  embeddings?: FaceEmbedding[]
   createdAt?: string
   updatedAt?: string
 }

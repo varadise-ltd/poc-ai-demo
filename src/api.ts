@@ -76,6 +76,18 @@ interface FaceRecord {
   width?: number | null
   height?: number | null
   face_count?: number | null
+  embeddings?: FaceEmbeddingRecord[]
+  created_at: string
+  updated_at: string
+}
+
+interface FaceEmbeddingRecord {
+  id: number
+  angle: string
+  image_name: string
+  image_path: string
+  has_embedding_512: boolean
+  embedding_512_dim: number
   created_at: string
   updated_at: string
 }
@@ -86,6 +98,10 @@ interface FaceMutationResult extends FaceRecord {
 
 export function faceImageUrl(id: number): string {
   return `${BASE_URL}/api/faces/${id}/image`
+}
+
+export function faceEmbeddingImageUrl(faceId: number, embeddingId: number): string {
+  return `${BASE_URL}/api/faces/${faceId}/embeddings/${embeddingId}/image`
 }
 
 function toFaceData(r: FaceRecord): FaceData {
@@ -99,9 +115,21 @@ function toFaceData(r: FaceRecord): FaceData {
     width: r.width ?? undefined,
     height: r.height ?? undefined,
     faceCount: r.face_count ?? undefined,
+    embeddings: (r.embeddings ?? []).map((e) => ({
+      id: e.id,
+      angle: e.angle,
+      imageName: e.image_name,
+      image: faceEmbeddingImageUrl(r.id, e.id),
+      hasEmbedding512: e.has_embedding_512,
+    })),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }
+}
+
+export interface FaceImageInput {
+  file: File
+  angle: string
 }
 
 export async function getFaceMeta(): Promise<FaceMeta> {
@@ -176,19 +204,27 @@ export interface FaceMutationOutcome {
   validation?: FaceValidation
 }
 
-export async function createFace(name: string, file: File): Promise<FaceMutationOutcome> {
+export async function createFace(name: string, images: FaceImageInput[]): Promise<FaceMutationOutcome> {
   const form = new FormData()
   form.append('name', name)
-  form.append('image', file)
+  for (const { file, angle } of images) {
+    form.append('images', file)
+    form.append('angles', angle)
+  }
   const res = await fetch(`${BASE_URL}/api/faces`, { method: 'POST', body: form })
   const data = await handle<FaceMutationResult>(res)
   return { face: toFaceData(data), validation: data.validation }
 }
 
-export async function updateFace(id: number, name?: string, file?: File): Promise<FaceMutationOutcome> {
+export async function updateFace(id: number, name?: string, images?: FaceImageInput[]): Promise<FaceMutationOutcome> {
   const form = new FormData()
   if (name !== undefined) form.append('name', name)
-  if (file) form.append('image', file)
+  if (images && images.length) {
+    for (const { file, angle } of images) {
+      form.append('images', file)
+      form.append('angles', angle)
+    }
+  }
   const res = await fetch(`${BASE_URL}/api/faces/${id}`, { method: 'PUT', body: form })
   const data = await handle<FaceMutationResult>(res)
   return { face: toFaceData(data), validation: data.validation }
