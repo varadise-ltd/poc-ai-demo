@@ -110,10 +110,6 @@ function showDetail(e: (typeof store.historyEvents)[number]): void {
             <div class="stat-label">With snapshot</div>
             <div class="stat-value">{{ filtered.filter((e) => e.imageUrl).length }}</div>
           </div>
-          <div class="stat">
-            <div class="stat-label">{{ loading ? 'Loading…' : 'Source' }}</div>
-            <div class="stat-value" style="font-size: 13px">Backend records</div>
-          </div>
         </div>
         <div class="events-list">
           <template v-if="filtered.length">
