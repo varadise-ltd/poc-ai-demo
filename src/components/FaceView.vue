@@ -70,7 +70,7 @@ watch(
       <div v-else class="config-list">
         <div v-for="face in store.faceData" :key="face.id" class="config-row face-row">
           <div class="face-identity">
-            <img class="face-avatar" :src="face.image" :alt="`${face.name} avatar`" />
+            <img class="face-avatar" :src="face.thumbnail || face.image" :alt="`${face.name} avatar`" />
             <button class="face-link" @click="editFace(face.id)">{{ face.name }}</button>
             <span class="pill" :class="{ gray: !face.hasEmbedding512 }">512d{{ face.hasEmbedding512 ? ' ✓' : ' ✗' }}</span>
             <span v-if="face.embeddings && face.embeddings.length" class="pill">{{ face.embeddings.length }} angle{{ face.embeddings.length > 1 ? 's' : '' }}</span>

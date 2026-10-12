@@ -255,7 +255,7 @@ async function save(): Promise<void> {
             <label>Currently registered</label>
             <ul class="face-angle-list">
               <li v-for="img in registeredImages" :key="img.id" class="face-angle-item">
-                <img class="face-avatar face-avatar-preview" :src="img.image" :alt="img.angle" />
+                <img class="face-avatar face-avatar-preview" :src="img.thumbnail || img.image" :alt="img.angle" />
                 <div class="face-angle-meta">
                   <span class="subtitle">{{ angleLabel(img.angle) }}</span>
                   <span class="pill">registered</span>

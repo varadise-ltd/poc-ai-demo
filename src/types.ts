@@ -64,6 +64,8 @@ export interface FaceEmbedding {
   angle: string
   imageName: string
   image: string
+  /** 后端生成并入库的缩略图 data URL（列表/角度预览直接展示）。 */
+  thumbnail?: string
   hasEmbedding512?: boolean
 }
 
@@ -72,6 +74,8 @@ export interface FaceData {
   name: string
   imageName: string
   image: string
+  /** 后端生成并入库的缩略图 data URL（圆形头像直接展示）。 */
+  thumbnail?: string
   hasEmbedding?: boolean
   hasEmbedding512?: boolean
   width?: number

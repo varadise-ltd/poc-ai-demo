@@ -17,7 +17,7 @@ const face = computed(() => store.faceData.find((f) => f.id === store.editingFac
       </div>
       <div class="detail-body">
         <div style="display: flex; gap: 18px; align-items: center; margin: 16px 0">
-          <img class="face-avatar" :src="face?.image" style="width: 72px; height: 72px" alt="Face avatar" />
+          <img class="face-avatar" :src="face?.thumbnail || face?.image" style="width: 72px; height: 72px" alt="Face avatar" />
           <div>
             <h3>{{ face?.name }}</h3>
             <p class="subtitle">{{ face?.imageName }}</p>

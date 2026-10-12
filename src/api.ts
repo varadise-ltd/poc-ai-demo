@@ -76,6 +76,7 @@ interface FaceRecord {
   width?: number | null
   height?: number | null
   face_count?: number | null
+  thumbnail?: string | null
   embeddings?: FaceEmbeddingRecord[]
   created_at: string
   updated_at: string
@@ -88,6 +89,7 @@ interface FaceEmbeddingRecord {
   image_path: string
   has_embedding_512: boolean
   embedding_512_dim: number
+  thumbnail?: string | null
   created_at: string
   updated_at: string
 }
@@ -110,6 +112,7 @@ function toFaceData(r: FaceRecord): FaceData {
     name: r.name,
     imageName: r.image_name,
     image: faceImageUrl(r.id),
+    thumbnail: r.thumbnail ?? undefined,
     hasEmbedding: r.has_embedding,
     hasEmbedding512: r.has_embedding_512,
     width: r.width ?? undefined,
@@ -120,6 +123,7 @@ function toFaceData(r: FaceRecord): FaceData {
       angle: e.angle,
       imageName: e.image_name,
       image: faceEmbeddingImageUrl(r.id, e.id),
+      thumbnail: e.thumbnail ?? undefined,
       hasEmbedding512: e.has_embedding_512,
     })),
     createdAt: r.created_at,
