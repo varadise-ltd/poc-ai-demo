@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { getFaceLive, getGateLive, listCameras, listScripts, snapshotUrl, streamUrl } from '../api'
-import type { FaceLiveInfo, GateLiveInfo } from '../api'
+import { getCraneLive, getFaceLive, getGateLive, getPortLive, listCameras, listScripts, snapshotUrl, streamUrl } from '../api'
+import type { CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PortLiveInfo } from '../api'
 import type { Camera, EventItem, Script } from '../types'
 import { formatDisplayConfidence } from '../confidence'
 import {
@@ -158,6 +158,8 @@ async function pollTick(): Promise<void> {
   void loadDetectionEvents()
   void loadGateLive()
   void loadFaceLive()
+  void loadPortLive()
+  void loadCraneLive()
   if (isCountingScript.value && !store.historyEvents.length) void loadPreviewHistory()
 }
 
@@ -183,6 +185,10 @@ function stopPolling(): void {
   gateLiveError.value = ''
   faceLive.value = null
   faceLiveError.value = ''
+  portLive.value = null
+  portLiveError.value = ''
+  craneLive.value = null
+  craneLiveError.value = ''
 }
 
 // ---------------------------------------------------------------------------
@@ -193,8 +199,11 @@ function stopPolling(): void {
 const gateLive = ref<GateLiveInfo | null>(null)
 const gateLiveError = ref('')
 const isCountingScript = computed(() => selectedScript.value?.isCounting === true)
-// Pedestrian / Vehicle Segregation：静态分界线，无 IN/OUT 语义，只统计人员/交通工具数量。
-const isSegregation = computed(() => selectedScript.value?.isSegregation === true)
+// Pedestrian / Vehicle 在 ROI 内计数（画 ROI，无 IN/OUT）：覆盖 ROI 计数模型
+// （isRoiCounting）与旧的隔离线模型（isSegregation），只统计人员/交通工具数量。
+const isSegregation = computed(() =>
+  selectedScript.value?.isSegregation === true || selectedScript.value?.isRoiCounting === true,
+)
 const roiPeopleLabel = computed(() => (gateLive.value?.roi_configured ? 'People in ROI (now)' : 'People (now, whole frame)'))
 
 // ---------------------------------------------------------------------------
@@ -203,6 +212,53 @@ const roiPeopleLabel = computed(() => (gateLive.value?.roi_configured ? 'People 
 const faceLive = ref<FaceLiveInfo | null>(null)
 const faceLiveError = ref('')
 const isFaceScript = computed(() => selectedScript.value?.isFace === true)
+
+// ---------------------------------------------------------------------------
+// 港口实时读数（Port Terminal Truck 装卸區 + Port Quay Crane 吊具視角）
+// ---------------------------------------------------------------------------
+// ``port``（port_terminal）是计数脚本，IN/OUT 走 GatePipeline 计数面板；这里
+// 额外展示装卸區佔用時長 + 装卸代理（静止启发）。``port_crane`` 非计数脚本，
+// 这里展示 crane cycle 阶段（pick-up / landing / hatch / idle）。
+const portLive = ref<PortLiveInfo | null>(null)
+const portLiveError = ref('')
+const craneLive = ref<CraneLiveInfo | null>(null)
+const craneLiveError = ref('')
+const isPortScript = computed(() => selectedScript.value?.isPort === true)
+// 港口两类模型按 detector_type 区分（ROI 为核心）：port_terminal = 集卡装卸區
+//（车辆进入/离开 ROI 计算停留时长，箭头仅示意）；port_crane = 岸橋吊具 cycle；
+// port_combined = 一个模型同时覆盖 truck + crane 两块读数。
+const isPortTruck = computed(() =>
+  ['port_terminal', 'port_combined'].includes(selectedScript.value?.detectorType ?? ''),
+)
+const isPortCrane = computed(() =>
+  ['port_crane', 'port_combined'].includes(selectedScript.value?.detectorType ?? ''),
+)
+
+async function loadPortLive(): Promise<void> {
+  if (!isPortTruck.value || !isRunning.value || !store.selectedCamera) {
+    portLive.value = null
+    return
+  }
+  try {
+    portLive.value = await getPortLive(store.selectedCamera, store.selectedScriptId)
+    portLiveError.value = ''
+  } catch (err) {
+    portLiveError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function loadCraneLive(): Promise<void> {
+  if (!isPortCrane.value || !isRunning.value || !store.selectedCamera) {
+    craneLive.value = null
+    return
+  }
+  try {
+    craneLive.value = await getCraneLive(store.selectedCamera, store.selectedScriptId)
+    craneLiveError.value = ''
+  } catch (err) {
+    craneLiveError.value = err instanceof Error ? err.message : String(err)
+  }
+}
 
 async function loadFaceLive(): Promise<void> {
   if (!isFaceScript.value || !isRunning.value || !store.selectedCamera) {
@@ -386,9 +442,13 @@ async function loadGateLive(): Promise<void> {
 watch([() => store.selectedCamera, () => store.selectedScriptId], () => {
   gateLive.value = null
   faceLive.value = null
+  portLive.value = null
+  craneLive.value = null
   if (isRunning.value) {
     void loadGateLive()
     void loadFaceLive()
+    void loadPortLive()
+    void loadCraneLive()
     void loadPreviewHistory()
   }
 })
@@ -402,9 +462,13 @@ watch(isRunning, (running) => {
   if (running) {
     void loadGateLive()
     void loadFaceLive()
+    void loadPortLive()
+    void loadCraneLive()
   } else {
     gateLive.value = null
     faceLive.value = null
+    portLive.value = null
+    craneLive.value = null
     // 模型已停止：预览随之关闭（停止中的 model 不可预览）。
     previewing.value = false
   }
@@ -649,7 +713,8 @@ onBeforeUnmount(() => {
               Counts come from the same facts as the stored report.
             </p>
             <p v-else class="subtitle">
-              People and vehicles are counted as they appear in view (cumulative per run / today / all-time).
+              People and vehicles inside the ROI are counted once per appearance —
+              static / slow-moving objects detected across multiple frames are deduplicated.
             </p>
             <p v-if="!isSegregation && crossLineHint" class="subtitle" style="color: var(--yellow, #d29922)">
               {{ gateLive.roi_people.session }} person(s) were detected inside the ROI this run, but
@@ -708,6 +773,74 @@ onBeforeUnmount(() => {
           <p v-else class="subtitle">
             {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the
             AI model page, then recognized names will appear here.
+          </p>
+        </div>
+
+        <div v-if="isPortTruck" class="gate-live">
+          <div class="gate-live-head">
+            <strong>{{ selectedScript.name }} · loading bay</strong>
+            <span class="subtitle">
+              Truck bay occupancy + loading/unloading proxy (stationary heuristic, not pick-up/landing)
+            </span>
+            <span v-if="portLive?.mode === 'MOCK'" class="gate-live-badge">DEMO</span>
+          </div>
+          <p v-if="portLiveError" class="subtitle" style="color: var(--red)">{{ portLiveError }}</p>
+          <template v-if="portLive && portLive.running">
+            <div class="gate-live-stats">
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Trucks in loading bay (now)</span>
+                <strong class="gate-live-value">{{ portLive.trucks_in_roi }}</strong>
+              </div>
+            </div>
+            <div v-if="portLive.trucks.length" class="gate-live-lines">
+              <div v-for="(t, i) in portLive.trucks" :key="t.track_id ?? i" class="gate-live-line">
+                <span class="gate-live-line-name">truck #{{ t.track_id }}</span>
+                <span class="gate-live-line-dir">
+                  <span class="in">{{ t.loading ? 'loading proxy' : 'in bay' }}</span>
+                  <span class="subtitle">{{ t.dwell ?? '…' }}</span>
+                </span>
+              </div>
+            </div>
+            <p v-else class="subtitle">No truck is currently inside the loading bay.</p>
+          </template>
+          <p v-else class="subtitle">
+            {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the
+            AI model page, then bay occupancy will appear here.
+          </p>
+        </div>
+
+        <div v-if="isPortCrane" class="gate-live">
+          <div class="gate-live-head">
+            <strong>{{ selectedScript.name }} · quay crane cycle</strong>
+            <span class="subtitle">
+              Open-vocabulary spreader / container / hatch + virtual PLC state machine
+            </span>
+            <span v-if="craneLive?.mode === 'MOCK'" class="gate-live-badge">DEMO</span>
+          </div>
+          <p v-if="craneLiveError" class="subtitle" style="color: var(--red)">{{ craneLiveError }}</p>
+          <template v-if="craneLive && craneLive.running">
+            <div class="gate-live-stats">
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Crane cycle state</span>
+                <strong class="gate-live-value">{{ craneLive.state }}</strong>
+              </div>
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Spreader</span>
+                <strong class="gate-live-value in">{{ craneLive.spreaders }}</strong>
+              </div>
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Container</span>
+                <strong class="gate-live-value">{{ craneLive.containers }}</strong>
+              </div>
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Hatch</span>
+                <strong class="gate-live-value out">{{ craneLive.hatches }}</strong>
+              </div>
+            </div>
+          </template>
+          <p v-else class="subtitle">
+            {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the
+            AI model page, then the crane cycle will appear here.
           </p>
         </div>
 

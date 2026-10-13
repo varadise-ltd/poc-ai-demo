@@ -34,8 +34,14 @@ export interface Script {
   isCounting?: boolean
   /** Static pedestrian/vehicle boundary: one line, with no IN/OUT direction. */
   isSegregation?: boolean
+  /** ROI-based people/vehicle counting: draw ROI (no line), dedup in-ROI objects. */
+  isRoiCounting?: boolean
   /** Face-recognition script: preview shows the recognized-person readout. */
   isFace?: boolean
+  /** Port script (port / port_crane): preview shows the port live readout. */
+  isPort?: boolean
+  /** Detector type (e.g. port_terminal / port_crane) — distinguishes port sub-models. */
+  detectorType?: string
 }
 
 export interface EventItem {

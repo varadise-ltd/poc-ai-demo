@@ -392,7 +392,10 @@ interface ScriptRecord {
   deleted?: boolean
   is_counting?: boolean
   is_segregation?: boolean
+  is_roi_counting?: boolean
   is_face?: boolean
+  is_port?: boolean
+  detector_type?: string
   run?: { status: 'running' | 'stopped'; camera?: string | null; pid?: number | null }
 }
 
@@ -421,7 +424,10 @@ function toScript(r: ScriptRecord): Script {
     deleted: r.deleted ?? false,
     isCounting: r.is_counting ?? false,
     isSegregation: r.is_segregation ?? false,
+    isRoiCounting: r.is_roi_counting ?? false,
     isFace: r.is_face ?? false,
+    isPort: r.is_port ?? false,
+    detectorType: r.detector_type ?? undefined,
     params,
   }
 }
@@ -892,6 +898,60 @@ export async function getFaceLive(cameraId: string, scriptId?: string): Promise<
   if (scriptId) q.set('script_id', scriptId)
   const res = await fetch(`${BASE_URL}/api/faces/live?${q.toString()}`)
   return handle<FaceLiveInfo>(res)
+}
+
+// ---------------------------------------------------------------------------
+// Port / quay-crane live readouts
+// ---------------------------------------------------------------------------
+
+/** One truck currently inside the loading bay. */
+export interface PortLiveTruck {
+  track_id: number | null
+  entered_at: string | null
+  dwell_seconds: number | null
+  dwell: string | null
+  loading: boolean
+  loading_started_at: string | null
+  activity_count: number
+  confidence: number | null
+}
+
+/** Live loading-bay readout for the port (truck) preview panel. */
+export interface PortLiveInfo {
+  camera_id: string
+  script_id: string | null
+  running: boolean
+  mode: string
+  trucks_in_roi: number
+  trucks: PortLiveTruck[]
+  updated_at: string | null
+}
+
+export async function getPortLive(cameraId: string, scriptId?: string): Promise<PortLiveInfo> {
+  const q = new URLSearchParams({ camera_id: cameraId })
+  if (scriptId) q.set('script_id', scriptId)
+  const res = await fetch(`${BASE_URL}/api/port/live?${q.toString()}`)
+  return handle<PortLiveInfo>(res)
+}
+
+/** Live quay-crane cycle readout (Axxon spreader view). */
+export interface CraneLiveInfo {
+  camera_id: string
+  script_id: string | null
+  running: boolean
+  mode: string
+  state: string
+  spreaders: number
+  containers: number
+  hatches: number
+  updated_at: string | null
+}
+
+export async function getCraneLive(cameraId: string, scriptId?: string): Promise<CraneLiveInfo> {
+  const q = new URLSearchParams({ camera_id: cameraId })
+  if (scriptId) q.set('script_id', scriptId)
+  const res = await fetch(`${BASE_URL}/api/port/crane/live?${q.toString()}`)
+  return handle<CraneLiveInfo>(res)
 }
 
 // ---------------------------------------------------------------------------
