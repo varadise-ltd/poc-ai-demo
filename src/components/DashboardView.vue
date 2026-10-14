@@ -20,10 +20,22 @@ const selectedId = ref('face')
 const result = ref<DashboardQueryResult | null>(null)
 const loading = ref(false)
 const error = ref('')
-const filters = ref({ cameraId: 'all', personName: 'all', matchStatus: 'all' as 'all' | 'matched' | 'unknown', violation: 'all' })
+const filters = ref({
+  cameraId: 'all',
+  personName: 'all',
+  matchStatus: 'all' as 'all' | 'matched' | 'unknown',
+  violation: 'all',
+  direction: 'all' as 'all' | 'in' | 'out',
+  objectClass: 'all' as 'all' | 'pedestrian' | 'vehicle',
+})
 const rangePreset = ref('7d')
 const customStart = ref('')
 const customEnd = ref('')
+const pageSize = ref(20)
+const page = ref(1)
+const totalPages = computed(() => Math.max(1, Math.ceil((result.value?.total ?? 0) / pageSize.value)))
+const pageStart = computed(() => result.value?.total ? (page.value - 1) * pageSize.value + 1 : 0)
+const pageEnd = computed(() => Math.min(page.value * pageSize.value, result.value?.total ?? 0))
 
 function formatLocalDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -58,14 +70,14 @@ const descriptions: Record<string, string> = {
 }
 let requestId = 0
 const people = computed(() => {
-  const values = new Set((result.value?.records ?? []).map((record) => record.person_name).filter(Boolean) as string[])
+  const values = new Set(result.value?.people ?? (result.value?.records ?? []).map((record) => record.person_name).filter(Boolean) as string[])
   return [...values].sort()
 })
 const violations = computed(() => {
-  const values = new Set((result.value?.records ?? []).flatMap((record) => record.violations))
+  const values = new Set(result.value?.violations ?? (result.value?.records ?? []).flatMap((record) => record.violations))
   return [...values].sort()
 })
-const visibleRecords = computed(() => (result.value?.records ?? []).slice(0, 100))
+const visibleRecords = computed(() => result.value?.records ?? [])
 
 interface FacePersonGroup {
   name: string
@@ -156,7 +168,8 @@ function currentRange(): { start: string; end: string } {
   return { start: start.toISOString(), end: end.toISOString() }
 }
 
-async function loadDashboard(): Promise<void> {
+async function loadDashboard(resetPage = true): Promise<void> {
+  if (resetPage) page.value = 1
   const id = ++requestId
   loading.value = true
   error.value = ''
@@ -172,6 +185,10 @@ async function loadDashboard(): Promise<void> {
       ...filters.value,
       personName: filters.value.matchStatus === 'unknown' ? 'all' : filters.value.personName,
       start, end,
+      ...(selectedId.value === 'face' ? {} : {
+        limit: pageSize.value,
+        offset: (page.value - 1) * pageSize.value,
+      }),
     })
     if (id === requestId) result.value = response
   } catch (err) {
@@ -185,11 +202,30 @@ function resetFilters(): void {
   requestId++
   loading.value = false
   error.value = ''
-  filters.value = { cameraId: 'all', personName: 'all', matchStatus: 'all', violation: 'all' }
+  filters.value = {
+    cameraId: 'all', personName: 'all', matchStatus: 'all', violation: 'all',
+    direction: 'all', objectClass: 'all',
+  }
   rangePreset.value = '7d'
   customStart.value = ''
   customEnd.value = ''
+  page.value = 1
   result.value = null
+}
+
+async function changePage(nextPage: number): Promise<void> {
+  const bounded = Math.min(Math.max(nextPage, 1), totalPages.value)
+  if (bounded === page.value || loading.value || !result.value) return
+  page.value = bounded
+  await loadDashboard(false)
+}
+
+async function changePageSize(value: string): Promise<void> {
+  const nextSize = Number(value)
+  if (![20, 50, 100].includes(nextSize)) return
+  pageSize.value = nextSize
+  page.value = 1
+  if (result.value) await loadDashboard()
 }
 
 async function selectDashboard(id: string): Promise<void> {
@@ -698,7 +734,23 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
               <option v-for="item in violations" :key="item" :value="item">{{ item }}</option>
             </select>
           </div>
-          <button class="btn primary dashboard-search" :disabled="loading || Boolean(customRangeError)" @click="loadDashboard">{{ loading ? 'Loading…' : 'Search' }}</button>
+          <div v-if="selectedId === 'inout'" class="dash-filter">
+            <label>Direction</label>
+            <select v-model="filters.direction">
+              <option value="all">All directions</option>
+              <option value="in">IN</option>
+              <option value="out">OUT</option>
+            </select>
+          </div>
+          <div v-if="selectedId === 'segregation'" class="dash-filter">
+            <label>Object type</label>
+            <select v-model="filters.objectClass">
+              <option value="all">All types</option>
+              <option value="pedestrian">Pedestrian</option>
+              <option value="vehicle">Vehicle</option>
+            </select>
+          </div>
+          <button class="btn primary dashboard-search" :disabled="loading || Boolean(customRangeError)" @click="() => void loadDashboard()">{{ loading ? 'Loading…' : 'Search' }}</button>
           <button class="btn dashboard-reset" @click="resetFilters">Reset</button>
         </div>
 
@@ -802,9 +854,22 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
           </div>
           </template>
           <template v-else>
-          <div class="dash-sec-head">
-            <h3>Detection records <span class="dash-count-pill good">{{ result.total }}</span></h3>
-            <span class="dash-sec-sub">Showing up to 100 latest records</span>
+          <div class="dash-sec-head dashboard-records-head">
+            <div class="dashboard-records-title">
+              <h3>Detection records <span class="dash-count-pill good">{{ result.total }}</span></h3>
+              <span class="dash-sec-sub">Showing filtered results</span>
+            </div>
+            <div class="dashboard-records-tools">
+              <span class="dashboard-record-range">{{ pageStart }}–{{ pageEnd }} of {{ result.total }}</span>
+              <label class="dash-page-size">
+                <span>Rows</span>
+                <select :value="pageSize" @change="changePageSize(($event.target as HTMLSelectElement).value)">
+                  <option :value="20">20 / page</option>
+                  <option :value="50">50 / page</option>
+                  <option :value="100">100 / page</option>
+                </select>
+              </label>
+            </div>
           </div>
           <div class="dashboard-records">
             <div v-for="record in visibleRecords" :key="record.record_id" class="dashboard-record">
@@ -833,6 +898,11 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
               <strong class="dashboard-confidence">{{ displayConfidence(record.confidence) }}</strong>
             </div>
             <div v-if="!visibleRecords.length" class="detail-empty">No records for the selected filters.</div>
+          </div>
+          <div v-if="result.total > pageSize" class="dash-pager dashboard-record-pager">
+            <button class="btn" :disabled="page <= 1 || loading" @click="changePage(page - 1)">‹ Previous</button>
+            <span class="dash-page-info">Page {{ page }} / {{ totalPages }}</span>
+            <button class="btn" :disabled="page >= totalPages || loading" @click="changePage(page + 1)">Next ›</button>
           </div>
           </template>
         </template>

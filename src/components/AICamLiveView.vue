@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { getCraneLive, getFaceLive, getGateLive, getPortLive, listCameras, listScripts, snapshotUrl, streamUrl } from '../api'
-import type { CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PortLiveInfo } from '../api'
+import { getCraneLive, getFaceLive, getGateLive, getPortLive, getRoi, listCameras, listScripts, snapshotUrl, streamUrl } from '../api'
+import type { CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PortLiveInfo, RoiPolygon } from '../api'
 import type { Camera, EventItem, Script } from '../types'
 import { formatDisplayConfidence } from '../confidence'
 import {
@@ -107,8 +107,33 @@ const currentStreamUrl = computed(() => {
   if (store.previewPaused) {
     return snapshotUrl(store.selectedCamera, store.selectedScriptId, store.previewShowLabels)
   }
-  return streamUrl(store.selectedCamera, store.selectedScriptId, store.previewShowLabels)
+  return streamUrl(store.selectedCamera, store.selectedScriptId, store.previewShowLabels, false)
 })
+
+const previewRois = ref<RoiPolygon[]>([])
+const previewFrameWidth = ref(1280)
+const previewFrameHeight = ref(720)
+
+async function loadPreviewRoi(): Promise<void> {
+  if (!store.selectedScriptId || !store.selectedCamera) {
+    previewRois.value = []
+    return
+  }
+  try {
+    const roi = await getRoi(store.selectedScriptId, store.selectedCamera)
+    previewRois.value = roi.rois.filter((polygon) => polygon.points.length >= 3)
+  } catch {
+    previewRois.value = []
+  }
+}
+
+function onPreviewFrameLoad(event: Event): void {
+  const image = event.target as HTMLImageElement
+  if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+    previewFrameWidth.value = image.naturalWidth
+    previewFrameHeight.value = image.naturalHeight
+  }
+}
 
 // 画面左下角显示当前预览的真实摄像机与分辨率（原先是写死的装饰文字）
 const selectedCameraLabel = computed(() => {
@@ -125,6 +150,7 @@ async function togglePreview(): Promise<void> {
   if (!previewing.value && !isRunning.value) return
   previewing.value = !previewing.value
   if (previewing.value) {
+    await loadPreviewRoi()
     await loadPreviewHistory()
   }
 }
@@ -396,6 +422,7 @@ watch([() => store.selectedCamera, () => store.selectedScriptId], () => {
 
 // 切换摄像机后，下拉里只剩该摄像机可用（已启用）的 AI model。
 watch(() => store.selectedCamera, () => syncSelectedModel())
+watch([() => store.selectedCamera, () => store.selectedScriptId], () => void loadPreviewRoi())
 
 // 运行状态与统计保持一致：worker 在别处（本页 Preview 或 AI model 页 Run）
 // 启动/停止后，本页自动跟随，无需刷新页面。轮询本身一直运行（见 pollTick）。
@@ -528,12 +555,35 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="video">
-          <img
-            v-if="previewing"
-            :src="currentStreamUrl"
-            alt="Live detection stream"
-            class="video-frame"
-          />
+          <div v-if="previewing" class="video-stage">
+            <img
+              :src="currentStreamUrl"
+              alt="Live detection stream"
+              class="video-frame"
+              @load="onPreviewFrameLoad"
+            />
+            <svg
+              v-if="previewRois.length"
+              class="preview-roi-overlay"
+              :viewBox="`0 0 ${previewFrameWidth} ${previewFrameHeight}`"
+              preserveAspectRatio="xMidYMid meet"
+              aria-label="Configured ROI boundary"
+            >
+              <polygon
+                v-for="(roi, index) in previewRois"
+                :key="roi.id ?? index"
+                :points="roi.points.map(([x, y]) => `${x},${y}`).join(' ')"
+                class="preview-roi-polygon"
+              />
+              <text
+                v-for="(roi, index) in previewRois"
+                :key="`label-${roi.id ?? index}`"
+                :x="roi.points[0]?.[0] ?? 0"
+                :y="Math.max(24, (roi.points[0]?.[1] ?? 24) - 8)"
+                class="preview-roi-label"
+              >ROI {{ index + 1 }}</text>
+            </svg>
+          </div>
           <div v-else class="video-placeholder">
             <span v-if="!isRunning">This AI model is stopped — start it on the AI model page, then click “Preview”.</span>
             <span v-else>Click “Preview” to view the AI-detected stream.</span>
@@ -673,50 +723,6 @@ onBeforeUnmount(() => {
           </p>
         </div>
 
-        <div v-if="isFaceScript" class="gate-live">
-          <div class="gate-live-head">
-            <strong>{{ selectedScript.name }} · face recognition</strong>
-            <span class="subtitle">
-              Cumulative session counts; recognized people deduplicated per 5-minute window
-            </span>
-            <span v-if="faceLive?.mode === 'MOCK'" class="gate-live-badge">DEMO</span>
-          </div>
-          <p v-if="faceLiveError" class="subtitle" style="color: var(--red)">{{ faceLiveError }}</p>
-          <template v-if="faceLive && faceLive.running">
-            <div class="gate-live-stats">
-              <div class="gate-live-stat">
-                <span class="gate-live-label">Faces detected (this run)</span>
-                <strong class="gate-live-value">{{ faceLive.detections }}</strong>
-              </div>
-              <div class="gate-live-stat">
-                <span class="gate-live-label">Recognized (this run)</span>
-                <strong class="gate-live-value in">{{ faceLive.recognized }}</strong>
-              </div>
-              <div class="gate-live-stat">
-                <span class="gate-live-label">Unknown (this run)</span>
-                <strong class="gate-live-value out">{{ faceLive.unknown }}</strong>
-              </div>
-            </div>
-            <div v-if="faceLive.people.length" class="gate-live-lines">
-              <div v-for="p in faceLive.people" :key="p.name" class="gate-live-line">
-                <span class="gate-live-line-name">{{ p.name }}</span>
-                <span class="gate-live-line-dir">
-                  <span class="in">{{ formatDisplayConfidence(p.confidence) }}</span>
-                  <span v-if="p.count" class="subtitle">×{{ p.count }}</span>
-                  <span v-if="p.last_seen_at" class="subtitle">{{ formatDetectedAt(p.last_seen_at) }}</span>
-                </span>
-              </div>
-            </div>
-            <p v-else class="subtitle">
-              No registered person is in view — unrecognized faces are not matched to any name.
-            </p>
-          </template>
-          <p v-else class="subtitle">
-            {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the
-            AI model page, then recognized names will appear here.
-          </p>
-        </div>
-
         <div v-if="isPortTruck" class="gate-live">
           <div class="gate-live-head">
             <strong>{{ selectedScript.name }} · loading bay</strong>
@@ -785,25 +791,7 @@ onBeforeUnmount(() => {
           </p>
         </div>
 
-        <div v-if="isCountingScript" class="events-list">
-          <div v-if="intervalHistory.length" class="count-interval-list">
-            <div v-for="bucket in intervalHistory" :key="bucket.period" class="event">
-              <span class="event-time">{{ bucket.period }}</span>
-              <span class="event-mark ok"></span>
-              <div>
-                <div class="event-name">10-minute people-counting summary</div>
-                <div class="event-meta">
-                  <template v-if="monitorCamera === 'all' && bucket.cameraLabel">
-                    <strong>{{ bucket.cameraLabel }}</strong> ·
-                  </template>
-                  ROI entries {{ bucket.roi }} · IN {{ bucket.in }} · OUT {{ bucket.out }} · events {{ bucket.detections }}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div v-else class="detail-empty">No counting history for the selected camera scope.</div>
-        </div>
-        <div v-else class="events-list">
+        <div v-if="!isCountingScript" class="events-list">
           <template v-if="monitorEvents.length">
             <div
               v-for="(e, i) in monitorEvents"

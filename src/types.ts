@@ -221,4 +221,8 @@ export interface DashboardQueryResult {
   total: number
   stats: DashboardStat[]
   records: DashboardRecord[]
+  people?: string[]
+  violations?: string[]
+  offset?: number
+  limit?: number
 }

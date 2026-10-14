@@ -574,6 +574,39 @@ input[type='range'].param-range::-moz-range-thumb {
   background: #000;
 }
 
+.video-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.preview-roi-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.preview-roi-polygon {
+  fill: rgba(255, 193, 7, 0.08);
+  stroke: #ffd54a;
+  stroke-width: 4;
+  stroke-dasharray: 18 12;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
+}
+
+.preview-roi-label {
+  fill: #fff3b0;
+  font-size: 22px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: #17212b;
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}
+
 .video-placeholder {
   position: absolute;
   inset: 0;
@@ -2198,6 +2231,72 @@ body:has(.detail-modal.show) {
 .dashboard-content .dashboard-records,
 .dashboard-content .dash-sec-head {
   margin-top: 18px;
+}
+
+.dashboard-content .dash-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.dashboard-records-head {
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0 4px;
+}
+
+.dashboard-records-title {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dashboard-records-title h3 {
+  margin: 0;
+}
+
+.dashboard-records-tools {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.dashboard-record-range {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.dash-page-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dash-page-size select {
+  min-width: 116px;
+}
+
+.dashboard-record-pager {
+  margin-top: 16px;
+  justify-content: center;
+}
+
+@media (max-width: 680px) {
+  .dashboard-records-head {
+    align-items: flex-start;
+  }
+
+  .dashboard-records-tools {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 
 /* Dashboard KPI summaries stay on one desktop row whenever they contain up to

@@ -51,6 +51,10 @@ export async function queryDashboard(
     personName?: string
     matchStatus?: 'all' | 'matched' | 'unknown'
     violation?: string
+    direction?: 'all' | 'in' | 'out'
+    objectClass?: 'all' | 'pedestrian' | 'vehicle'
+    limit?: number
+    offset?: number
   } = {},
 ): Promise<DashboardQueryResult> {
   const query = new URLSearchParams()
@@ -60,6 +64,10 @@ export async function queryDashboard(
   if (filters.personName && filters.personName !== 'all') query.set('person_name', filters.personName)
   if (filters.matchStatus) query.set('match_status', filters.matchStatus)
   if (filters.violation && filters.violation !== 'all') query.set('violation', filters.violation)
+  if (filters.direction && filters.direction !== 'all') query.set('direction', filters.direction)
+  if (filters.objectClass && filters.objectClass !== 'all') query.set('object_class', filters.objectClass)
+  if (filters.limit !== undefined) query.set('limit', String(filters.limit))
+  if (filters.offset !== undefined) query.set('offset', String(filters.offset))
   const qs = query.toString()
   return handle<DashboardQueryResult>(await fetch(`${BASE_URL}/api/dashboard/${encodeURIComponent(dashboardId)}/query${qs ? `?${qs}` : ''}`))
 }
@@ -982,8 +990,13 @@ export async function getCraneLive(cameraId: string, scriptId?: string): Promise
 // Stream URLs (MJPEG preview + snapshot)
 // ---------------------------------------------------------------------------
 
-export function streamUrl(camera: string, scriptId: string, annotate: boolean): string {
-  const q = new URLSearchParams({ camera, script_id: scriptId, annotate: String(annotate) })
+export function streamUrl(camera: string, scriptId: string, annotate: boolean, roiOverlay = true): string {
+  const q = new URLSearchParams({
+    camera,
+    script_id: scriptId,
+    annotate: String(annotate),
+    roi_overlay: String(roiOverlay),
+  })
   return `${BASE_URL}/api/stream?${q.toString()}`
 }
 
