@@ -188,9 +188,11 @@ function step(delta: number): void {
 .detail-image img {
   width: 100%;
   height: 100%;
-  /* Preserve the original camera frame ratio.  The dark stage may show
-     letterbox/pillarbox space, but no evidence pixels are cropped or stretched. */
-  object-fit: contain;
+  /* Fill the complete adaptive stage without black bars or distortion.  The
+     image keeps its native aspect ratio; only excess edges may be cropped when
+     the source ratio differs from the detail viewport ratio. */
+  object-fit: cover;
+  object-position: center;
 }
 
 .detail-image-empty {
