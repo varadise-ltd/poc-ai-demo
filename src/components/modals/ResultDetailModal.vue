@@ -126,30 +126,26 @@ function step(delta: number): void {
 <style scoped>
 .detail-image {
   position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background: #0d1117;
-  min-height: 280px;
+  display: block;
+  overflow: visible;
+  background: transparent;
+  min-height: 0;
 }
 
 .detail-image-stage {
   position: relative;
   width: 100%;
-  height: min(50vh, 420px);
-  min-height: 280px;
-  display: flex;
-  align-items: stretch;
-  justify-content: center;
-  background: #0d1117;
+  height: auto;
+  min-height: 0;
+  display: block;
+  background: transparent;
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .detail-image-stage .detail-image {
   width: 100%;
-  height: 100%;
+  height: auto;
   min-height: 0;
 }
 
@@ -186,13 +182,12 @@ function step(delta: number): void {
 }
 
 .detail-image img {
+  display: block;
   width: 100%;
-  height: 100%;
-  /* Fill the complete adaptive stage without black bars or distortion.  The
-     image keeps its native aspect ratio; only excess edges may be cropped when
-     the source ratio differs from the detail viewport ratio. */
-  object-fit: cover;
-  object-position: center;
+  height: auto;
+  /* The image itself defines the stage ratio: full source frame, no stretch,
+     no crop, and no CSS-created letterbox/pillarbox bars. */
+  object-fit: initial;
 }
 
 .detail-image-empty {
