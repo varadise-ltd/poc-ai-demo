@@ -188,9 +188,9 @@ function step(delta: number): void {
 .detail-image img {
   width: 100%;
   height: 100%;
-  /* Fill the evidence stage like the reference UI; the dark stage crops only
-     excess edges while preserving the captured frame's aspect ratio. */
-  object-fit: cover;
+  /* Preserve the original camera frame ratio.  The dark stage may show
+     letterbox/pillarbox space, but no evidence pixels are cropped or stretched. */
+  object-fit: contain;
 }
 
 .detail-image-empty {
