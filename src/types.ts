@@ -55,6 +55,10 @@ export interface EventItem {
   confidence: string
   ok: boolean
   /**
+   * Durable event id; stable identity for prev/next navigation in Result detail.
+   */
+  eventId?: string
+  /**
    * Detection snapshot stored by the backend (local path route or S3 URL).
    * Rendered in Result detail; empty when the event had no evidence picture.
    */

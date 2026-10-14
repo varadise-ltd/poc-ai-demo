@@ -9,10 +9,13 @@ import {
 } from './data'
 import type { Alert, Camera, CameraAI, CameraModelRun, EventItem, FaceData, FaceMeta, FaceValidation, HistoryEvent, Script, ScriptRun } from './types'
 
-export type TabId = 'demo' | 'camera' | 'model' | 'dashboard' | 'face'
+export type TabId = 'demo' | 'config' | 'dashboard'
+export type ConfigTabId = 'camera' | 'model' | 'face'
 export const store = reactive({
   // Navigation
   activeTab: 'demo' as TabId,
+  // Configuration 子页：Camera / AI model / Face management。
+  configTab: 'camera' as ConfigTabId,
 
   // Data collections
   scripts: initialScripts.map((s) => ({ ...s })) as Script[],
@@ -59,6 +62,10 @@ export const store = reactive({
 
   // Modal visibility
   showResultDetail: false,
+  // Result detail can be opened from History or from Realtime monitoring.
+  // When opened from History, closing it returns to the same searched page
+  // without clearing the loaded rows, filters, or pagination state.
+  resultDetailFromHistory: false,
   showHistory: false,
   showControlDetail: false,
   showScriptDetail: false,
@@ -380,6 +387,7 @@ function alertToEvent(a: Alert): EventItem {
     meta: a.camera ?? '',
     confidence: a.confidence ?? '',
     ok,
+    eventId: a.event_id ?? undefined,
     imageUrl: a.image_url ?? '',
   }
 }
@@ -406,9 +414,11 @@ export async function loadHistoryEvents(filters: {
   cameraId?: string
   start?: string
   end?: string
+  limit?: number
+  offset?: number
 } = {}): Promise<void> {
   try {
-    const alerts = await api.listHistoryEvents({ ...filters, limit: 500 })
+    const alerts = await api.listHistoryEvents({ ...filters, limit: filters.limit ?? 500, offset: filters.offset ?? 0 })
     store.historyEvents = alerts.map((alert) => ({
       ...alertToEvent(alert),
       date: formatEventDate(alert.timestamp),

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { assetUrl, listCameras, queryDashboard } from '../api'
-import type { Camera, DashboardDefinition, DashboardQueryResult } from '../types'
+import { assetUrl, listCameras, listFaces, queryDashboard } from '../api'
+import type { Camera, DashboardDefinition, DashboardQueryResult, FaceData } from '../types'
 import { formatDisplayConfidence } from '../confidence'
 
 const defaultDashboards: DashboardDefinition[] = [
@@ -15,6 +15,7 @@ const defaultDashboards: DashboardDefinition[] = [
 
 const dashboards = ref<DashboardDefinition[]>(defaultDashboards)
 const cameras = ref<Camera[]>([])
+const faceLibrary = ref<FaceData[]>([])
 const selectedId = ref('face')
 const result = ref<DashboardQueryResult | null>(null)
 const loading = ref(false)
@@ -65,6 +66,52 @@ const violations = computed(() => {
   return [...values].sort()
 })
 const visibleRecords = computed(() => (result.value?.records ?? []).slice(0, 100))
+
+interface FacePersonGroup {
+  name: string
+  avatar: string
+  lastSeen: string
+  cameraCount: number
+  eventCount: number
+  events: DashboardQueryResult['records']
+}
+
+const recognizedPeople = computed<FacePersonGroup[]>(() => {
+  const groups = new Map<string, DashboardQueryResult['records']>()
+  for (const record of result.value?.records ?? []) {
+    if (!record.person_name || record.status !== 'recognized') continue
+    const events = groups.get(record.person_name) ?? []
+    events.push(record)
+    groups.set(record.person_name, events)
+  }
+  return [...groups.entries()]
+    .map(([name, events]) => {
+      const profile = faceLibrary.value.find((face) => face.name === name)
+      const cameras = new Set(events.map((event) => event.camera_id).filter(Boolean))
+      const latest = [...events].sort((a, b) => b.event_time.localeCompare(a.event_time))[0]
+      return {
+        name,
+        avatar: profile?.thumbnail || profile?.image || '',
+        lastSeen: latest?.event_time ?? '',
+        cameraCount: cameras.size,
+        eventCount: events.length,
+        events: [...events].sort((a, b) => b.event_time.localeCompare(a.event_time)),
+      }
+    })
+    .sort((a, b) => b.lastSeen.localeCompare(a.lastSeen))
+})
+
+const selectedPerson = ref<string | null>(null)
+const selectedPersonGroup = computed(() =>
+  recognizedPeople.value.find((person) => person.name === selectedPerson.value) ?? null,
+)
+const personSnapshotRecords = computed(() =>
+  (selectedPersonGroup.value?.events ?? []).filter((record) => record.snapshot_url),
+)
+
+function togglePerson(name: string): void {
+  selectedPerson.value = selectedPerson.value === name ? null : name
+}
 
 // --- Evidence snapshot viewer ---------------------------------------------
 // Every detection record carries the annotated frame captured with its event,
@@ -170,8 +217,9 @@ function displayConfidence(value: number | null): string {
 }
 
 onMounted(async () => {
-  const [cameraResponse] = await Promise.allSettled([listCameras()])
+  const [cameraResponse, facesResponse] = await Promise.allSettled([listCameras(), listFaces()])
   if (cameraResponse.status === 'fulfilled') cameras.value = cameraResponse.value
+  if (facesResponse.status === 'fulfilled') faceLibrary.value = facesResponse.value
 })
 
 // ---------------------------------------------------------------------------
@@ -459,7 +507,7 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
             Select at least one camera to view the loading sessions.
           </div>
           <template v-else>
-            <div class="dash-stats">
+            <div class="dash-stats crane-dash-stats kpi-count-3">
               <div class="dash-stat">
                 <div class="dash-stat-label">Truck visits</div>
                 <div class="dash-stat-value">{{ craneSummary.total.toLocaleString() }}</div>
@@ -597,7 +645,7 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
         <template v-if="selectedId !== 'crane'">
         <div class="dash-filters">
           <div class="dash-filter dash-time-filter">
-            <label>Time range</label>
+            <label>{{ selectedId === 'face' ? 'Date range' : 'Time range' }}</label>
             <div class="time-range-control">
               <span class="time-range-icon">◷</span>
               <select v-model="rangePreset">
@@ -661,13 +709,99 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
         <p v-if="error" class="form-error dashboard-api-error" role="alert">Dashboard data is unavailable ({{ error }}). Check the configured API service; a 404 may mean the running backend has not loaded the Dashboard routes.</p>
         <div v-else-if="loading" class="detail-empty">Loading dashboard records…</div>
         <template v-else-if="result">
-          <div class="dash-stats">
+          <div
+            class="dash-stats"
+            :class="{
+              'face-dash-stats': selectedId === 'face',
+              'ppe-dash-stats': selectedId === 'ppe',
+              [`kpi-count-${result.stats.length}`]: true,
+            }"
+          >
             <div v-for="stat in result.stats" :key="stat.label" class="dash-stat" :class="stat.tone">
               <div class="dash-stat-label">{{ stat.label }}</div>
               <div class="dash-stat-value">{{ stat.value.toLocaleString() }}</div>
             </div>
           </div>
 
+          <template v-if="selectedId === 'face'">
+          <div class="face-dashboard-section">
+            <div class="dash-sec-head face-section-head">
+              <h3>Recognized <span class="dash-count-pill good">{{ result.stats.find((stat) => stat.label === 'Recognized')?.value ?? 0 }}</span></h3>
+              <span class="dash-sec-sub">{{ recognizedPeople.length }} people</span>
+            </div>
+            <div class="face-person-list">
+              <div v-for="person in recognizedPeople" :key="person.name" class="face-person-group" :class="{ expanded: selectedPerson === person.name }">
+                <button type="button" class="face-person-row" @click="togglePerson(person.name)">
+                  <span class="face-person-avatar">
+                    <img v-if="person.avatar" :src="person.avatar" :alt="person.name" loading="lazy" />
+                    <span v-else>{{ person.name.slice(0, 1).toUpperCase() }}</span>
+                  </span>
+                  <span class="face-person-main">
+                    <strong>{{ person.name }}</strong>
+                    <small>Last seen {{ formatTime(person.lastSeen) }} · {{ person.cameraCount }} camera{{ person.cameraCount === 1 ? '' : 's' }}</small>
+                  </span>
+                  <span class="face-person-count">{{ person.eventCount }}</span>
+                  <span class="face-person-chevron" :class="{ open: selectedPerson === person.name }">›</span>
+                </button>
+                <div v-if="selectedPerson === person.name" class="face-person-events">
+                  <div class="face-person-events-head">
+                    <strong>{{ person.name }} snapshots</strong>
+                    <span>{{ personSnapshotRecords.length }} snapshot{{ personSnapshotRecords.length === 1 ? '' : 's' }} available</span>
+                  </div>
+                  <div v-for="event in person.events" :key="event.record_id" class="face-event-row">
+                    <button
+                      type="button"
+                      class="dashboard-record-thumb"
+                      :class="{ empty: !event.snapshot_url }"
+                      :disabled="!event.snapshot_url"
+                      :title="event.snapshot_url ? 'View snapshot' : 'No snapshot stored for this record'"
+                      @click.stop="openSnapshot(event)"
+                    >
+                      <img v-if="event.snapshot_url" :src="assetUrl(event.snapshot_url)" :alt="`Snapshot for ${person.name}`" loading="lazy" />
+                      <span v-else aria-hidden="true">—</span>
+                    </button>
+                    <span class="face-event-time">{{ formatTime(event.event_time) }}</span>
+                    <span class="face-event-camera">{{ event.camera_id || 'External source' }}</span>
+                    <span class="dash-tag match">{{ displayConfidence(event.confidence) }}</span>
+                  </div>
+                  <div v-if="!person.events.length" class="detail-empty">No recognition events for this person.</div>
+                </div>
+              </div>
+              <div v-if="!recognizedPeople.length" class="detail-empty">No recognized people for the selected filters.</div>
+            </div>
+          </div>
+
+          <div class="face-dashboard-section face-unknown-section">
+            <div class="dash-sec-head face-section-head">
+              <h3>Unknown <span class="dash-count-pill bad">{{ result.stats.find((stat) => stat.label === 'Unknown')?.value ?? 0 }}</span></h3>
+              <span class="dash-sec-sub">Unrecognized visitors</span>
+            </div>
+            <div class="dashboard-records">
+              <div v-for="record in visibleRecords.filter((item) => item.status === 'unknown')" :key="record.record_id" class="dashboard-record">
+                <button
+                  type="button"
+                  class="dashboard-record-thumb"
+                  :class="{ empty: !record.snapshot_url }"
+                  :disabled="!record.snapshot_url"
+                  :title="record.snapshot_url ? 'View snapshot' : 'No snapshot stored for this record'"
+                  @click="openSnapshot(record)"
+                >
+                  <img v-if="record.snapshot_url" :src="assetUrl(record.snapshot_url)" :alt="`Unknown face ${record.record_id}`" loading="lazy" />
+                  <span v-else aria-hidden="true">—</span>
+                </button>
+                <div class="dashboard-record-time">{{ formatTime(record.event_time) }}</div>
+                <div class="dashboard-record-main">
+                  <strong>Unknown visitor</strong>
+                  <span>{{ record.camera_id || 'External source' }}</span>
+                </div>
+                <span class="dash-tag nomatch">Unknown</span>
+                <strong class="dashboard-confidence">{{ displayConfidence(record.confidence) }}</strong>
+              </div>
+              <div v-if="!visibleRecords.some((item) => item.status === 'unknown')" class="detail-empty">No unknown visitors for the selected filters.</div>
+            </div>
+          </div>
+          </template>
+          <template v-else>
           <div class="dash-sec-head">
             <h3>Detection records <span class="dash-count-pill good">{{ result.total }}</span></h3>
             <span class="dash-sec-sub">Showing up to 100 latest records</span>
@@ -700,6 +834,7 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
             </div>
             <div v-if="!visibleRecords.length" class="detail-empty">No records for the selected filters.</div>
           </div>
+          </template>
         </template>
         </template>
       </section>

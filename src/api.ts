@@ -614,6 +614,7 @@ export async function listHistoryEvents(filters: {
   /** Exclusive UTC ISO bound. */
   end?: string
   limit?: number
+  offset?: number
 } = {}): Promise<Alert[]> {
   const q = new URLSearchParams()
   if (filters.scriptId) q.set('script_id', filters.scriptId)
@@ -621,8 +622,31 @@ export async function listHistoryEvents(filters: {
   if (filters.start) q.set('start', filters.start)
   if (filters.end) q.set('end', filters.end)
   if (filters.limit) q.set('limit', String(filters.limit))
+  if (filters.offset) q.set('offset', String(filters.offset))
   const res = await fetch(`${BASE_URL}/api/alerts?${q.toString()}`)
   return handle<Alert[]>(res)
+}
+
+/**
+ * Total matching events for the History dialog's pagination.
+ *
+ * Uses the same filters as ``listHistoryEvents`` so the page indicator can
+ * never disagree with the rows actually returned by the backend.
+ */
+export async function countHistoryEvents(filters: {
+  scriptId?: string
+  cameraId?: string
+  start?: string
+  end?: string
+} = {}): Promise<number> {
+  const q = new URLSearchParams()
+  if (filters.scriptId) q.set('script_id', filters.scriptId)
+  if (filters.cameraId && filters.cameraId !== 'all') q.set('camera_id', filters.cameraId)
+  if (filters.start) q.set('start', filters.start)
+  if (filters.end) q.set('end', filters.end)
+  const res = await fetch(`${BASE_URL}/api/alerts/count?${q.toString()}`)
+  const data = await handle<{ total: number }>(res)
+  return data.total ?? 0
 }
 
 // ---------------------------------------------------------------------------

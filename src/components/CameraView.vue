@@ -202,9 +202,9 @@ onMounted(async () => {
   await Promise.all([loadCameras(), loadScripts(), loadCameraAI()])
   await loadAllCameraRuns()
 
-  // 定时静默刷新：仅在停留在 Camera 页时拉取，避免后台无谓请求。
+  // 定时静默刷新：仅在停留在 Configuration → Camera 页时拉取，避免后台无谓请求。
   cameraRefreshTimer = window.setInterval(() => {
-    if (store.activeTab === 'camera') loadCameras(true)
+    if (store.activeTab === 'config' && store.configTab === 'camera') loadCameras(true)
   }, CAMERA_REFRESH_INTERVAL_MS)
 })
 

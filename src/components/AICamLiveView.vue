@@ -334,70 +334,11 @@ const intervalHistory = computed(() => {
 })
 
 // ---------------------------------------------------------------------------
-// 实时事件按固定时间窗聚合（非计数脚本）
+// 实时事件：直接逐条展示（不再按 5 分钟聚合）。点击任意一行打开 Result detail。
 // ---------------------------------------------------------------------------
-// 非计数脚本（如人脸识别）原本每个检测事件一行、大约每分钟一条；这里按
-// LIVE_BUCKET_MINUTES 分钟一桶合并，减少列表行数，并在桶内汇总识别到的姓名。
-const LIVE_BUCKET_MINUTES = 5
-
-interface LiveEventBucket {
-  startMs: number
-  period: string
-  count: number
-  names: string[]
-  cameras: Set<string>
-  cameraLabel: string
-  latest: EventItem | null
-}
-
-function extractDetectedName(eventName: string): string {
-  // 人脸告警消息形如 "<Name> detected" / "Unknown detected"；抽取出姓名。
-  const base = eventName.replace(/\s+detected\s*$/i, '').trim()
-  if (!base || /unknown/i.test(base)) return ''
-  return base
-}
-
-const liveEventBuckets = computed<LiveEventBucket[]>(() => {
-  const minutes = LIVE_BUCKET_MINUTES
-  const buckets = new Map<
-    number,
-    { count: number; names: Set<string>; cameras: Set<string>; latest: EventItem | null }
-  >()
-  for (const e of monitorEvents.value) {
-    const ts = e.timestamp
-    if (typeof ts !== 'number' || Number.isNaN(ts)) continue
-    const start = Math.floor(ts / (minutes * 60000)) * (minutes * 60000)
-    const bucket = buckets.get(start) ?? {
-      count: 0,
-      names: new Set<string>(),
-      cameras: new Set<string>(),
-      latest: null,
-    }
-    bucket.count += 1
-    if (e.camera) bucket.cameras.add(e.camera)
-    if (!bucket.latest || ts > (bucket.latest.timestamp ?? 0)) bucket.latest = e
-    if (isFaceScript.value) {
-      const name = extractDetectedName(e.name)
-      if (name) bucket.names.add(name)
-    }
-    buckets.set(start, bucket)
-  }
-  return [...buckets.entries()]
-    .map(([startMs, b]) => ({
-      startMs,
-      period: new Date(startMs).toLocaleTimeString([], { hour12: false }),
-      count: b.count,
-      names: [...b.names],
-      cameras: b.cameras,
-      cameraLabel: [...b.cameras].join(', '),
-      latest: b.latest,
-    }))
-    .sort((a, b) => b.startMs - a.startMs)
-})
-
-function openBucket(bucket: LiveEventBucket): void {
-  if (!bucket.latest) return
-  store.selectedEvent = bucket.latest
+function openEventDetail(e: EventItem): void {
+  store.selectedEvent = e
+  store.resultDetailFromHistory = false
   store.showResultDetail = true
 }
 
@@ -863,29 +804,20 @@ onBeforeUnmount(() => {
           <div v-else class="detail-empty">No counting history for the selected camera scope.</div>
         </div>
         <div v-else class="events-list">
-          <template v-if="liveEventBuckets.length">
+          <template v-if="monitorEvents.length">
             <div
-              v-for="bucket in liveEventBuckets"
-              :key="bucket.startMs"
+              v-for="(e, i) in monitorEvents"
+              :key="e.eventId ?? i"
               class="event"
-              @click="openBucket(bucket)"
+              @click="openEventDetail(e)"
             >
-              <span class="event-time">{{ bucket.period }}</span>
-              <span class="event-mark ok"></span>
+              <span class="event-time">{{ e.time }}</span>
+              <span class="event-mark" :class="{ ok: e.ok }"></span>
               <div>
-                <div class="event-name">
-                  {{ LIVE_BUCKET_MINUTES }}-minute summary · {{ bucket.count }} event{{ bucket.count === 1 ? '' : 's' }}
-                </div>
-                <div class="event-meta">
-                  <template v-if="isFaceScript && bucket.names.length">
-                    <strong>{{ bucket.names.join(', ') }}</strong>
-                  </template>
-                  <template v-else>
-                    <strong>{{ bucket.cameraLabel || store.selectedCamera }}</strong> · {{ bucket.latest?.meta ?? '' }}
-                  </template>
-                </div>
+                <div class="event-name">{{ e.name }}</div>
+                <div class="event-meta"><strong>{{ e.camera }}</strong> · {{ e.meta }}</div>
               </div>
-              <span v-if="bucket.latest" class="confidence">{{ bucket.latest.confidence }}</span>
+              <span class="confidence">{{ e.confidence }}</span>
             </div>
           </template>
           <div v-else class="detail-empty">No results for the selected script and camera scope.</div>

@@ -24,14 +24,14 @@ onMounted(async () => {
   await loadFaces()
 })
 
-// 點擊「Face management」標籤時即時刷新（quiet，不閃 loading）：
+// 點擊「Configuration → Face management」時即時刷新（quiet，不閃 loading）：
 // 512d 向量在後台線程異步補算，回到本頁需重新拉取，讓列表上的
 // 512d ✓/✗ 徽章反映最新狀態。本元件以 v-show 常駐掛載，onMounted 只跑一次，
-// 故需監聽 activeTab 補一次刷新。
+// 故需監聽 (activeTab, configTab) 補一次刷新。
 watch(
-  () => store.activeTab,
-  (tab) => {
-    if (tab === 'face') loadFaces(true)
+  () => [store.activeTab, store.configTab] as const,
+  ([tab, configTab]) => {
+    if (tab === 'config' && configTab === 'face') loadFaces(true)
   },
 )
 </script>

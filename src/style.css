@@ -2200,6 +2200,272 @@ body:has(.detail-modal.show) {
   margin-top: 18px;
 }
 
+/* Dashboard KPI summaries stay on one desktop row whenever they contain up to
+   four metrics. Four metrics use four equal columns; two and three metrics use
+   only the required number of equal columns instead of wrapping or stretching
+   into a vertical list. */
+.dashboard-content .dash-stats:not(.face-dash-stats) {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 13px;
+  border: 0;
+  overflow: visible;
+}
+
+.dashboard-content .dash-stats.kpi-count-2:not(.face-dash-stats) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dashboard-content .dash-stats.kpi-count-3:not(.face-dash-stats) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboard-content .dash-stats.kpi-count-4:not(.face-dash-stats) {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dashboard-content .dash-stats:not(.face-dash-stats) .dash-stat {
+  min-height: 84px;
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.dashboard-content .dash-stats:not(.face-dash-stats) .dash-stat-value {
+  margin-top: 7px;
+  font-size: 29px;
+  line-height: 1;
+  text-align: left;
+}
+
+/* PPE has four metrics and should remain a single balanced row on desktop.
+   The selector intentionally matches the specificity of the shared
+   ``:not(.face-dash-stats)`` rule above. */
+.dashboard-content .dash-stats.ppe-dash-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ppe-dash-stats .dash-stat {
+  min-width: 0;
+}
+
+.dashboard-content .face-dash-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 13px;
+  border: 0;
+  overflow: visible;
+}
+
+.face-dash-stats .dash-stat {
+  min-height: 84px;
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.face-dash-stats .dash-stat-value {
+  margin-top: 7px;
+  color: var(--navy);
+  font-size: 29px;
+  line-height: 1;
+  text-align: left;
+}
+
+.face-dash-stats .dash-stat.good .dash-stat-value {
+  color: #169b6d;
+}
+
+.face-dash-stats .dash-stat.bad .dash-stat-value {
+  color: #d94b4b;
+}
+
+/* ===================== Face Recognition dashboard ===================== */
+.face-dashboard-section {
+  margin-top: 18px;
+}
+
+.face-section-head {
+  margin-top: 0 !important;
+  margin-bottom: 10px;
+}
+
+.face-section-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dash-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  height: 23px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #dff2ea;
+  color: #12966a;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.dash-count-pill.bad {
+  background: #fde7e7;
+  color: #d94b4b;
+}
+
+.face-person-list {
+  display: grid;
+  gap: 8px;
+}
+
+.face-person-group {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.face-person-group:hover,
+.face-person-group.expanded {
+  border-color: #c8d9e2;
+  box-shadow: 0 2px 8px rgba(13, 37, 56, 0.04);
+}
+
+.face-person-row {
+  width: 100%;
+  min-height: 71px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 15px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.face-person-row:hover {
+  background: #fbfcfd;
+}
+
+.face-person-avatar {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #e8eef2;
+  color: var(--navy);
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.face-person-avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.face-person-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.face-person-main strong {
+  overflow: hidden;
+  color: var(--navy);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.face-person-main small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.face-person-count {
+  min-width: 38px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #dff2ea;
+  color: #12966a;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.face-person-chevron {
+  color: #6c899e;
+  font-size: 21px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.face-person-chevron.open {
+  transform: rotate(90deg);
+}
+
+.face-person-events {
+  padding: 12px 15px 13px 72px;
+  border-top: 1px solid var(--line);
+  background: #fbfcfd;
+}
+
+.face-person-events-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.face-person-events-head strong {
+  color: var(--navy);
+  font-size: 12px;
+}
+
+.face-person-events-head span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.face-event-row {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 64px minmax(125px, 0.8fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid #e8edf0;
+}
+
+.face-event-time,
+.face-event-camera {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.face-unknown-section {
+  margin-top: 27px;
+}
+
 .config-content {
   padding: 22px;
 }
@@ -3092,5 +3358,53 @@ input.invalid {
 
   .dashboard-record-main {
     min-width: 0;
+  }
+
+  .face-person-row {
+    grid-template-columns: 40px minmax(0, 1fr) auto 12px;
+    gap: 9px;
+    padding: 9px 11px;
+  }
+
+  .face-person-avatar {
+    width: 40px;
+    height: 40px;
+  }
+
+  .dashboard-content .dash-stats:not(.face-dash-stats) {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-content .dash-stats.kpi-count-2:not(.face-dash-stats),
+  .dashboard-content .dash-stats.kpi-count-3:not(.face-dash-stats),
+  .dashboard-content .dash-stats.kpi-count-4:not(.face-dash-stats) {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-content .dash-stats.ppe-dash-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-content .face-dash-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .face-person-events {
+    padding: 10px 11px 12px 60px;
+  }
+
+  .face-person-events-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .face-event-row {
+    grid-template-columns: 54px minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .face-event-camera {
+    grid-column: 2 / -1;
   }
 }

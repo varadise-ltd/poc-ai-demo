@@ -2,10 +2,8 @@
 import TopBar from './components/TopBar.vue'
 import TabNav from './components/TabNav.vue'
 import AICamLiveView from './components/AICamLiveView.vue'
-import CameraView from './components/CameraView.vue'
-import ControlView from './components/ControlView.vue'
+import ConfigurationView from './components/ConfigurationView.vue'
 import DashboardView from './components/DashboardView.vue'
-import FaceView from './components/FaceView.vue'
 import { store } from './store'
 </script>
 
@@ -15,10 +13,9 @@ import { store } from './store'
     <TabNav />
     <main class="app-main">
       <AICamLiveView v-show="store.activeTab === 'demo'" />
-      <CameraView v-show="store.activeTab === 'camera'" />
-      <ControlView v-show="store.activeTab === 'model'" />
       <DashboardView v-show="store.activeTab === 'dashboard'" />
-      <FaceView v-show="store.activeTab === 'face'" />
+      <ConfigurationView v-show="store.activeTab === 'config'" />
+   
     </main>
   </div>
 </template>

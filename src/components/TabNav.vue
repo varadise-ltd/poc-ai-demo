@@ -3,10 +3,8 @@ import { store, type TabId } from '../store'
 
 const tabs: { id: TabId; label: string }[] = [
   { id: 'demo', label: 'AI Cam Live' },
-  { id: 'camera', label: 'Camera' },
-  { id: 'model', label: 'AI model' },
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'face', label: 'Face management' },
+  { id: 'config', label: 'Configuration' },
 ]
 </script>
 

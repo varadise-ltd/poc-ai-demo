@@ -104,8 +104,8 @@ function cameraRunTitle(scriptId: string, camera: string): string {
 let pollTimer: number | null = null
 
 async function refreshExpandedCameraRuns(): Promise<void> {
-  // 仅在 AI model 页可见时轮询：切到其他 tab（v-show 常驻挂载）后台不发请求。
-  if (store.activeTab !== 'model') return
+  // 仅在 Configuration → AI model 页可见时轮询：切到其他 tab（v-show 常驻挂载）后台不发请求。
+  if (store.activeTab !== 'config' || store.configTab !== 'model') return
   const ids = Object.entries(controlExpanded.value)
     .filter(([, expanded]) => expanded)
     .map(([id]) => id)
