@@ -320,43 +320,10 @@ const monitorEvents = computed<EventItem[]>(() => {
   )
 })
 
-// The counting summary is built from durable history rows that are fetched per
-// camera scope, so switching the scope must refetch them.
+// Detailed detection rows are intentionally hidden on this page. Use History
+// to search the durable events, paginate them, and inspect snapshots.
 watch(monitorCamera, () => {
-  if (isCountingScript.value) void loadPreviewHistory()
-})
-
-const intervalHistory = computed(() => {
-  if (!isCountingScript.value) return []
-  const buckets = new Map<
-    string,
-    { period: string; detections: number; roi: number; in: number; out: number; cameras: Set<string> }
-  >()
-  for (const event of store.historyEvents) {
-    if (event.script !== selectedScript.value.name) continue
-    if (monitorCamera.value !== 'all' && event.camera !== monitorCamera.value) continue
-    const parsed = new Date(`${event.date}T${event.time}`)
-    if (Number.isNaN(parsed.getTime())) continue
-    parsed.setMinutes(Math.floor(parsed.getMinutes() / 10) * 10, 0, 0)
-    const key = parsed.toISOString()
-    const bucket = buckets.get(key) ?? {
-      period: parsed.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }),
-      detections: 0,
-      roi: 0,
-      in: 0,
-      out: 0,
-      cameras: new Set<string>(),
-    }
-    bucket.detections += 1
-    if (event.camera) bucket.cameras.add(event.camera)
-    if (event.name.toLowerCase().includes('entered roi')) bucket.roi += 1
-    if (event.name.startsWith('IN ·')) bucket.in += 1
-    if (event.name.startsWith('OUT ·')) bucket.out += 1
-    buckets.set(key, bucket)
-  }
-  return [...buckets.entries()]
-    .map(([key, b]) => ({ ...b, key, cameraLabel: [...b.cameras].join(', ') }))
-    .sort((a, b) => b.key.localeCompare(a.key))
+  if (isCountingScript.value && previewing.value) void loadPreviewHistory()
 })
 
 // ---------------------------------------------------------------------------
@@ -620,7 +587,6 @@ onBeforeUnmount(() => {
               </select>
             </label>
             <button class="btn" @click="store.showHistory = true">History</button>
-            <button class="btn" @click="clearEvents">Clear</button>
           </div>
         </div>
 
@@ -629,7 +595,7 @@ onBeforeUnmount(() => {
             <div class="stat-label">Detections</div>
             <div class="stat-value">{{ monitorEvents.length }}</div>
             <span class="subtitle">
-              ROI + count-line statistics from the running AI model
+              Live statistics from the running AI model · detailed results are available in History
             </span>
             <span v-if="gateLive?.mode === 'MOCK'" class="gate-live-badge">DEMO</span>
           </div>
@@ -791,25 +757,8 @@ onBeforeUnmount(() => {
           </p>
         </div>
 
-        <div v-if="!isCountingScript" class="events-list">
-          <template v-if="monitorEvents.length">
-            <div
-              v-for="(e, i) in monitorEvents"
-              :key="e.eventId ?? i"
-              class="event"
-              @click="openEventDetail(e)"
-            >
-              <span class="event-time">{{ e.time }}</span>
-              <span class="event-mark" :class="{ ok: e.ok }"></span>
-              <div>
-                <div class="event-name">{{ e.name }}</div>
-                <div class="event-meta"><strong>{{ e.camera }}</strong> · {{ e.meta }}</div>
-              </div>
-              <span class="confidence">{{ e.confidence }}</span>
-            </div>
-          </template>
-          <div v-else class="detail-empty">No results for the selected script and camera scope.</div>
-        </div>
+        <!-- Detection result rows are intentionally not rendered here. Open
+             History and click Search to query the durable results. -->
       </section>
     </div>
 
