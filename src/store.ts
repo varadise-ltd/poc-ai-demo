@@ -105,6 +105,7 @@ export const store = reactive({
 
   // Per-camera AI model instances (index framework: cameraAI)
   cameraAI: [] as CameraAI[],
+  cameraAIError: '',
 })
 
 // ---------------------------------------------------------------------------
@@ -112,7 +113,9 @@ export const store = reactive({
 // ---------------------------------------------------------------------------
 
 export const selectedScript = computed<Script>(
-  () => store.scripts.find((s) => s.id === store.selectedScriptId) ?? store.scripts[0],
+  () => store.scripts.find((s) => s.id === store.selectedScriptId) ?? {
+    id: '', name: 'No AI model selected', meta: '', loaded: false, cameras: [], kpis: [],
+  },
 )
 
 /**
@@ -707,10 +710,11 @@ export async function removeScriptRecord(id: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function loadCameraAI(): Promise<void> {
+  store.cameraAIError = ''
   try {
     store.cameraAI = await api.listCameraAI()
-  } catch {
-    // 忽略加载错误，保留旧数据
+  } catch (err) {
+    store.cameraAIError = err instanceof Error ? err.message : String(err)
   }
 }
 

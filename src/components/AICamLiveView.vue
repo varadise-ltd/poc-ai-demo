@@ -20,7 +20,11 @@ import ResultDetailModal from './modals/ResultDetailModal.vue'
 import HistoryModal from './modals/HistoryModal.vue'
 
 // 后端 AI model 的真实运行状态：由 AI model 页的 Run/Stop 控制。
-const isRunning = computed(() => selectedScriptRun.value.status === 'running')
+const isRunning = computed(() =>
+  !selectionBusy.value && !selectionError.value &&
+  availableScripts.value.some((script) => script.id === store.selectedScriptId) &&
+  selectedScriptRun.value.status === 'running',
+)
 
 // 预览显示开关（纯前端）：Preview / Stop Preview 只控制是否显示预览画面，
 // 与后端 AI model 是否 running 无关。后端 worker 只在 AI model 页手动 Stop
@@ -32,6 +36,12 @@ const previewing = ref(false)
 // ---------------------------------------------------------------------------
 const orgFilter = ref('')
 const orgFilterLoading = ref(false)
+const selectionLoading = ref(true)
+const orgFilterError = ref('')
+const selectionBusy = computed(() => selectionLoading.value || orgFilterLoading.value)
+const selectionError = computed(() =>
+  orgFilterError.value || store.cameraError || store.scriptError || store.cameraAIError,
+)
 // null = 未筛选（展示完整摄像机列表）；否则为后端按组织筛选的结果
 const filteredCameras = ref<Camera[] | null>(null)
 // 同一组织筛选也作用于检测脚本下拉（后端 GET /api/scripts?organization=）
@@ -61,13 +71,13 @@ const cameraModelIds = computed(
   () => new Set(store.cameraAI.filter((a) => a.camera === store.selectedCamera && a.enabled).map((a) => a.scriptId)),
 )
 const availableScripts = computed<Script[]>(() => {
-  // 实例数据尚未加载时不要误判为空列表，退回完整目录。
-  if (!store.cameraAI.length) return displayScripts.value
+  if (selectionBusy.value || selectionError.value || !store.selectedCamera) return []
   return displayScripts.value.filter((s) => cameraModelIds.value.has(s.id))
 })
 
 watch(orgFilter, async (org) => {
   orgFilterLoading.value = true
+  orgFilterError.value = ''
   try {
     if (org) {
       const [cameras, scriptRes] = await Promise.all([
@@ -80,26 +90,33 @@ watch(orgFilter, async (org) => {
       filteredCameras.value = null
       filteredScripts.value = null
     }
-    // 若当前选中的摄像机 / 脚本不在筛选结果中，自动切换到第一个可用项
-    const camNames = displayCameras.value.map((c) => c.name)
-    if (camNames.length && !camNames.includes(store.selectedCamera)) {
-      store.selectedCamera = camNames[0]
-    }
-    syncSelectedModel()
   } catch (err) {
-    alert(err instanceof Error ? err.message : String(err))
+    orgFilterError.value = err instanceof Error ? err.message : String(err)
   } finally {
     orgFilterLoading.value = false
+    syncSelectedCamera()
+    syncSelectedModel()
   }
 })
 
-// 选中的 AI model 必须属于当前摄像机，否则自动切到第一个可用项。
-function syncSelectedModel(): void {
-  const ids = availableScripts.value.map((s) => s.id)
-  if (ids.length && !ids.includes(store.selectedScriptId)) {
-    store.selectedScriptId = ids[0]
+function syncSelectedCamera(): void {
+  if (selectionBusy.value || selectionError.value) return
+  if (!displayCameras.value.some((camera) => camera.name === store.selectedCamera)) {
+    store.selectedCamera = displayCameras.value[0]?.name ?? ''
   }
 }
+
+// 选中的 AI model 必须属于当前摄像机，否则自动切到第一个可用项。
+function syncSelectedModel(): void {
+  if (selectionBusy.value) return
+  const ids = availableScripts.value.map((s) => s.id)
+  if (!ids.includes(store.selectedScriptId)) {
+    store.selectedScriptId = ids[0] ?? ''
+  }
+}
+
+watch(displayCameras, syncSelectedCamera)
+watch(availableScripts, syncSelectedModel)
 
 // 预览画面 URL：运行中显示 MJPEG 流；暂停时用快照冻结画面
 const currentStreamUrl = computed(() => {
@@ -442,6 +459,8 @@ function toggleFullscreen(): void {
 
 onMounted(async () => {
   await Promise.all([loadScripts(), loadCameras(), loadCameraAI()])
+  selectionLoading.value = false
+  syncSelectedCamera()
   syncSelectedModel()
   // Poll from mount: an already-running worker must show its preview and live
   // statistics immediately, and a worker started elsewhere must be picked up.
@@ -471,14 +490,17 @@ onBeforeUnmount(() => {
     <div class="toolbar live-toolbar">
       <div class="field">
         <label for="live-organization">1 · Organization</label>
-        <select id="live-organization" v-model="orgFilter" :disabled="orgFilterLoading">
+        <select id="live-organization" v-model="orgFilter" :disabled="selectionBusy">
           <option value="">All organizations</option>
           <option v-for="org in orgOptions" :key="org" :value="org">{{ org }}</option>
         </select>
       </div>
       <div class="field">
         <label for="live-camera">2 · Select camera</label>
-        <select id="live-camera" v-model="store.selectedCamera">
+        <select id="live-camera" v-model="store.selectedCamera" :disabled="selectionBusy || !!selectionError || !displayCameras.length" :title="store.selectedCamera">
+          <option v-if="selectionBusy" :value="store.selectedCamera">Loading cameras...</option>
+          <option v-else-if="selectionError" :value="store.selectedCamera">Unable to load cameras</option>
+          <option v-else-if="!displayCameras.length" value="">No cameras available</option>
           <option v-for="c in displayCameras" :key="c.id" :value="c.name">
             {{ c.name }} · {{ c.status }}
           </option>
@@ -486,14 +508,20 @@ onBeforeUnmount(() => {
       </div>
       <div class="field">
         <label for="live-model">3 · Select AI model</label>
-        <select id="live-model" v-model="store.selectedScriptId" :disabled="!availableScripts.length" aria-describedby="live-selection-hint">
+        <select id="live-model" v-model="store.selectedScriptId" :disabled="selectionBusy || !availableScripts.length" :title="selectedScript.name" aria-describedby="live-selection-hint">
+          <option v-if="selectionBusy" :value="store.selectedScriptId">Loading AI models...</option>
+          <option v-else-if="selectionError" value="">Unable to load AI models</option>
+          <option v-else-if="!availableScripts.length" value="">No enabled AI models</option>
           <option v-for="s in availableScripts" :key="s.id" :value="s.id">
             {{ s.name }} · {{ store.scriptRuns[s.id]?.status ?? 'stopped' }}
           </option>
         </select>
       </div>
       <div id="live-selection-hint" class="live-selection-hint" aria-live="polite">
-        <span v-if="!availableScripts.length" class="field-hint">
+        <span v-if="selectionBusy" class="subtitle">Loading cameras and AI models...</span>
+        <span v-else-if="selectionError" class="field-hint">Unable to load camera or AI model lists: {{ selectionError }}</span>
+        <span v-else-if="!displayCameras.length" class="field-hint">No cameras available.</span>
+        <span v-else-if="!availableScripts.length" class="field-hint">
           No AI model is enabled on {{ store.selectedCamera }} — assign one in the Camera page.
         </span>
         <span v-else-if="!isRunning" class="field-hint">
@@ -768,67 +796,3 @@ onBeforeUnmount(() => {
     <HistoryModal />
   </section>
 </template>
-
-<style scoped>
-.live-toolbar {
-  grid-template-columns: minmax(120px, 180px) minmax(140px, 220px) minmax(180px, 260px) minmax(160px, 1fr) auto;
-  align-items: start;
-}
-
-.live-toolbar > .field {
-  min-width: 0;
-  gap: 7px;
-}
-
-.live-toolbar label {
-  line-height: 16px;
-  letter-spacing: 0;
-}
-
-.live-toolbar select {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  height: 38px;
-  text-overflow: ellipsis;
-}
-
-.live-selection-hint {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  min-height: 38px;
-  margin-top: 23px;
-}
-
-.live-selection-hint .field-hint {
-  max-width: 340px;
-  overflow-wrap: anywhere;
-}
-
-.live-toolbar > .stream-state {
-  align-self: start;
-  margin: 23px 0 0;
-}
-
-.live-toolbar .stream-state .btn {
-  height: 38px;
-  white-space: nowrap;
-}
-
-@media (max-width: 800px) {
-  .live-toolbar {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
-  .live-toolbar > .field:nth-child(-n + 2),
-  .live-toolbar > .stream-state {
-    grid-column: 1 / -1;
-  }
-
-  .live-toolbar > .stream-state {
-    margin-top: 0;
-    justify-self: end;
-  }
-}
-</style>

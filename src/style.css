@@ -398,6 +398,68 @@ h3 {
   min-width: 220px;
 }
 
+.toolbar.live-toolbar {
+  grid-template-columns: minmax(120px, 180px) minmax(140px, 220px) minmax(180px, 260px) minmax(160px, 1fr) auto;
+  align-items: start;
+}
+
+.live-toolbar > .field {
+  min-width: 0;
+  gap: 7px;
+}
+
+.live-toolbar label {
+  line-height: 16px;
+  letter-spacing: 0;
+}
+
+.live-toolbar select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  text-overflow: ellipsis;
+}
+
+.live-selection-hint {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 38px;
+  margin-top: 23px;
+}
+
+.live-selection-hint .field-hint {
+  max-width: 340px;
+  overflow-wrap: anywhere;
+}
+
+.live-toolbar > .stream-state {
+  align-self: start;
+  margin: 23px 0 0;
+}
+
+.live-toolbar .stream-state .btn {
+  height: 38px;
+  white-space: nowrap;
+}
+
+@media (max-width: 800px) {
+  .toolbar.live-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .live-toolbar > .field:nth-child(-n + 2),
+  .live-toolbar > .stream-state {
+    grid-column: 1 / -1;
+  }
+
+  .live-toolbar > .stream-state {
+    margin-top: 0;
+    justify-self: end;
+  }
+}
+
 /* 下拉为空时的说明文字（例如该摄像机没有已启用的 AI model） */
 .field-hint {
   color: var(--red);
