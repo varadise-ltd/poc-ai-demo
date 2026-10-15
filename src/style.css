@@ -441,7 +441,7 @@ input[type='range'].param-range {
   outline: none;
   padding: 0;
   border: 0;
-  box-shadow: none;
+  grid-template-columns: minmax(220px, 0.95fr) minmax(270px, 1.15fr) minmax(420px, 1.8fr) auto;
 }
 
 input[type='range'].param-range::-webkit-slider-thumb {
@@ -453,6 +453,12 @@ input[type='range'].param-range::-webkit-slider-thumb {
   background: var(--orange);
   cursor: pointer;
   border: 2px solid #fff;
+.field-hint-inline {
+  display: inline-block;
+  margin-left: 10px;
+  max-width: 310px;
+  vertical-align: middle;
+}
   box-shadow: 0 1px 4px rgba(22, 44, 61, 0.25);
 }
 
@@ -3372,6 +3378,11 @@ input.invalid {
 
   .field {
     min-width: 0;
+  }
+  .field-hint-inline {
+    display: block;
+    margin: 7px 0 0;
+    max-width: none;
   }
 
   .stream-state {

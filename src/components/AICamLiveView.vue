@@ -468,31 +468,36 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="toolbar">
+    <div class="toolbar live-toolbar">
       <div class="field">
-        <label>1 · Organization</label>
-        <select v-model="orgFilter" :disabled="orgFilterLoading">
+        <label for="live-organization">1 · Organization</label>
+        <select id="live-organization" v-model="orgFilter" :disabled="orgFilterLoading">
           <option value="">All organizations</option>
           <option v-for="org in orgOptions" :key="org" :value="org">{{ org }}</option>
         </select>
       </div>
       <div class="field">
-        <label>2 · Select camera</label>
-        <select v-model="store.selectedCamera">
+        <label for="live-camera">2 · Select camera</label>
+        <select id="live-camera" v-model="store.selectedCamera">
           <option v-for="c in displayCameras" :key="c.id" :value="c.name">
             {{ c.name }} · {{ c.status }}
           </option>
         </select>
       </div>
       <div class="field">
-        <label>3 · Select AI model</label>
-        <select v-model="store.selectedScriptId" :disabled="!availableScripts.length">
+        <label for="live-model">3 · Select AI model</label>
+        <select id="live-model" v-model="store.selectedScriptId" :disabled="!availableScripts.length" aria-describedby="live-selection-hint">
           <option v-for="s in availableScripts" :key="s.id" :value="s.id">
             {{ s.name }} · {{ store.scriptRuns[s.id]?.status ?? 'stopped' }}
           </option>
         </select>
+      </div>
+      <div id="live-selection-hint" class="live-selection-hint" aria-live="polite">
         <span v-if="!availableScripts.length" class="field-hint">
           No AI model is enabled on {{ store.selectedCamera }} — assign one in the Camera page.
+        </span>
+        <span v-else-if="!isRunning" class="field-hint">
+          This AI model is stopped — start it on the AI model page to preview.
         </span>
       </div>
       <div class="stream-state">
@@ -505,9 +510,6 @@ onBeforeUnmount(() => {
         >
           {{ previewing ? 'Stop Preview' : 'Preview' }}
         </button>
-        <span v-if="!isRunning" class="field-hint">
-          This AI model is stopped — start it on the AI model page to preview.
-        </span>
       </div>
     </div>
 
@@ -766,3 +768,67 @@ onBeforeUnmount(() => {
     <HistoryModal />
   </section>
 </template>
+
+<style scoped>
+.live-toolbar {
+  grid-template-columns: minmax(120px, 180px) minmax(140px, 220px) minmax(180px, 260px) minmax(160px, 1fr) auto;
+  align-items: start;
+}
+
+.live-toolbar > .field {
+  min-width: 0;
+  gap: 7px;
+}
+
+.live-toolbar label {
+  line-height: 16px;
+  letter-spacing: 0;
+}
+
+.live-toolbar select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  text-overflow: ellipsis;
+}
+
+.live-selection-hint {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 38px;
+  margin-top: 23px;
+}
+
+.live-selection-hint .field-hint {
+  max-width: 340px;
+  overflow-wrap: anywhere;
+}
+
+.live-toolbar > .stream-state {
+  align-self: start;
+  margin: 23px 0 0;
+}
+
+.live-toolbar .stream-state .btn {
+  height: 38px;
+  white-space: nowrap;
+}
+
+@media (max-width: 800px) {
+  .live-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .live-toolbar > .field:nth-child(-n + 2),
+  .live-toolbar > .stream-state {
+    grid-column: 1 / -1;
+  }
+
+  .live-toolbar > .stream-state {
+    margin-top: 0;
+    justify-self: end;
+  }
+}
+</style>
