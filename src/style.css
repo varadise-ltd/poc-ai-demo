@@ -383,7 +383,8 @@ h3 {
 
 .toolbar {
   padding: 18px;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.25fr) minmax(260px, 1.45fr) auto;
   align-items: end;
   gap: 15px;
   margin-bottom: 18px;
@@ -489,7 +490,7 @@ input[type='range'].param-range::-moz-range-thumb {
 }
 
 .stream-state {
-  margin-left: auto;
+  margin-left: 0;
   align-self: end;
   display: flex;
   gap: 9px;
