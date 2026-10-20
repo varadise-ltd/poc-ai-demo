@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { listCameras as apiListCameras, redactUrl } from '../api'
+import { redactUrl } from '../api'
 import {
   addCameraAIRecord,
   cameraRun,
@@ -18,22 +18,11 @@ import CameraEditorModal from './modals/CameraEditorModal.vue'
 import AiDetailModal from './modals/AiDetailModal.vue'
 import AddAiModal from './modals/AddAiModal.vue'
 
-// Camera filter (server-side filtering via GET /api/cameras?status=&organization=)
+// Camera status filter; tenant scope is controlled by the active Org ID.
 const cameraFilterStatus = ref('')
-const cameraFilterOrg = ref('')
 const cameraFilterLoading = ref(false)
 // null = 未筛选，展示完整列表；否则展示后端筛选结果
 const filteredCameras = ref<Camera[] | null>(null)
-
-// 组织机构下拉选项：取自当前完整摄像机列表的去重 organization
-const cameraOrgOptions = computed(() => {
-  const orgs = new Set<string>()
-  for (const c of store.cameras) {
-    const org = (c.organization ?? '').trim()
-    if (org) orgs.add(org)
-  }
-  return [...orgs].sort()
-})
 
 // 列表展示数据：筛选态用后端结果，否则用完整列表
 const displayedCameras = computed(() => filteredCameras.value ?? store.cameras)
@@ -41,9 +30,9 @@ const displayedCameras = computed(() => filteredCameras.value ?? store.cameras)
 async function applyCameraFilter(): Promise<void> {
   cameraFilterLoading.value = true
   try {
-    filteredCameras.value = await apiListCameras(
-      cameraFilterStatus.value || undefined,
-      cameraFilterOrg.value || undefined,
+    await loadCameras(true)
+    filteredCameras.value = store.cameras.filter((camera) =>
+      !cameraFilterStatus.value || camera.status === cameraFilterStatus.value,
     )
   } catch (err) {
     alert(err instanceof Error ? err.message : String(err))
@@ -54,7 +43,6 @@ async function applyCameraFilter(): Promise<void> {
 
 function resetCameraFilter(): void {
   cameraFilterStatus.value = ''
-  cameraFilterOrg.value = ''
   filteredCameras.value = null
 }
 
@@ -237,11 +225,8 @@ onBeforeUnmount(() => {
           </select>
         </div>
         <div class="field">
-          <label>Organization</label>
-          <select v-model="cameraFilterOrg">
-            <option value="">All organizations</option>
-            <option v-for="org in cameraOrgOptions" :key="org" :value="org">{{ org }}</option>
-          </select>
+          <label>Active Org ID</label>
+          <input :value="store.activeOrgId" readonly />
         </div>
         <div class="filter-actions">
           <button class="btn primary" :disabled="cameraFilterLoading" @click="applyCameraFilter">

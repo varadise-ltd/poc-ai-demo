@@ -13,7 +13,6 @@ const name = ref('')
 const rtmp = ref('')
 const resolution = ref('1920 × 1080')
 const rotate = ref('0°')
-const organization = ref('')
 const orgAdmin = ref('')
 const saving = ref(false)
 const error = ref('')
@@ -31,7 +30,6 @@ const checking = ref(false)
 const nameError = ref('')
 const resolutionError = ref('')
 const rotateError = ref('')
-const organizationError = ref('')
 const orgAdminError = ref('')
 
 // 「Check stream」成功标志：仅当「当前 URL」已探测成功才为 true。
@@ -51,13 +49,11 @@ watch(
     nameError.value = ''
     resolutionError.value = ''
     rotateError.value = ''
-    organizationError.value = ''
     orgAdminError.value = ''
     name.value = store.cameraEditorName
     rtmp.value = store.cameraEditorRtmp
     resolution.value = store.cameraEditorResolution
     rotate.value = store.cameraEditorRotate
-    organization.value = store.cameraEditorOrganization
     orgAdmin.value = store.cameraEditorOrgAdmin
   },
 )
@@ -127,11 +123,6 @@ function validateRotate(value: string): string | null {
   return allowed.includes(value) ? null : 'Frame rotate is not a valid option.'
 }
 
-function validateOrganization(value: string): string | null {
-  if (value.length > ORG_MAX) return `Organization must be ${ORG_MAX} characters or fewer.`
-  return null
-}
-
 function validateOrgAdmin(value: string): string | null {
   if (value.length > ORG_MAX) return `Organization admin must be ${ORG_MAX} characters or fewer.`
   return null
@@ -191,10 +182,6 @@ function onNameInput(): void {
   if (nameError.value) nameError.value = validateName(name.value) ?? ''
 }
 
-function onOrganizationInput(): void {
-  if (organizationError.value) organizationError.value = validateOrganization(organization.value) ?? ''
-}
-
 function onOrgAdminInput(): void {
   if (orgAdminError.value) orgAdminError.value = validateOrgAdmin(orgAdmin.value) ?? ''
 }
@@ -206,13 +193,11 @@ async function save(): Promise<void> {
   nameError.value = validateName(name.value) ?? ''
   resolutionError.value = validateResolution(resolution.value) ?? ''
   rotateError.value = validateRotate(rotate.value) ?? ''
-  organizationError.value = validateOrganization(organization.value) ?? ''
   orgAdminError.value = validateOrgAdmin(orgAdmin.value) ?? ''
   if (
     nameError.value ||
     resolutionError.value ||
     rotateError.value ||
-    organizationError.value ||
     orgAdminError.value
   ) {
     return
@@ -245,7 +230,6 @@ async function save(): Promise<void> {
         'online',
         resolution.value,
         rotate.value,
-        organization.value.trim(),
         orgAdmin.value.trim(),
       )
     } else if (store.cameraEditorId !== null) {
@@ -254,7 +238,6 @@ async function save(): Promise<void> {
         rtmp: rtmp.value.trim(),
         resolution: resolution.value,
         rotate: rotate.value,
-        organization: organization.value.trim(),
         org_admin: orgAdmin.value.trim(),
       })
     }
@@ -332,14 +315,8 @@ async function save(): Promise<void> {
             <div v-if="rotateError" class="rtmp-hint" style="color: var(--red)">{{ rotateError }}</div>
           </div>
           <div class="field full">
-            <label>Organization (owner tenant)</label>
-            <input
-              v-model="organization"
-              :class="{ invalid: !!organizationError }"
-              placeholder="e.g. Operations Dept."
-              @input="onOrganizationInput"
-            />
-            <div v-if="organizationError" class="rtmp-hint" style="color: var(--red)">{{ organizationError }}</div>
+            <label>Active Org ID</label>
+            <input :value="store.activeOrgId" readonly />
           </div>
           <div class="field full">
             <label>Organization admin</label>

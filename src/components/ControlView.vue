@@ -157,23 +157,12 @@ async function onToggleRun(id: string): Promise<void> {
   }
 }
 
-// Script filter (server-side filtering via GET /api/scripts?status=&organization=&scenario=)
+// Script filters; tenant scope is controlled by the active Org ID.
 const scriptFilterStatus = ref('')
-const scriptFilterOrg = ref('')
 const scriptFilterScenario = ref('')
 const scriptFilterLoading = ref(false)
 // null = 未筛选，展示完整列表；否则展示后端筛选结果
 const filteredScripts = ref<Script[] | null>(null)
-
-// 组织机构 / 使用场景下拉选项：取自当前完整脚本列表的去重值
-const scriptOrgOptions = computed(() => {
-  const orgs = new Set<string>()
-  for (const s of store.scripts) {
-    const org = (s.organization ?? '').trim()
-    if (org) orgs.add(org)
-  }
-  return [...orgs].sort()
-})
 
 const scriptScenarioOptions = computed(() => {
   const scenarios = new Set<string>()
@@ -192,7 +181,7 @@ async function applyScriptFilter(): Promise<void> {
   try {
     const { scripts } = await apiListScripts(
       scriptFilterStatus.value || undefined,
-      scriptFilterOrg.value || undefined,
+      undefined,
       scriptFilterScenario.value || undefined,
     )
     filteredScripts.value = scripts
@@ -205,7 +194,6 @@ async function applyScriptFilter(): Promise<void> {
 
 function resetScriptFilter(): void {
   scriptFilterStatus.value = ''
-  scriptFilterOrg.value = ''
   scriptFilterScenario.value = ''
   filteredScripts.value = null
 }
@@ -323,11 +311,8 @@ onBeforeUnmount(() => {
           </select>
         </div>
         <div class="field">
-          <label>Organization</label>
-          <select v-model="scriptFilterOrg">
-            <option value="">All organizations</option>
-            <option v-for="org in scriptOrgOptions" :key="org" :value="org">{{ org }}</option>
-          </select>
+          <label>Active Org ID</label>
+          <input :value="store.activeOrgId" readonly />
         </div>
         <div class="field">
           <label>Scenario</label>

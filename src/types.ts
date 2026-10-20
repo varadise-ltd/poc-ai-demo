@@ -23,6 +23,8 @@ export interface Script {
   description?: string
   params?: ScriptParam[]
   organization?: string
+  /** Cosmos organization identifier used as the tenant key. */
+  orgId?: string
   scenario?: string
   videoSource?: string
   rtmpOutput?: string
@@ -86,6 +88,8 @@ export interface FaceData {
   image: string
   /** 后端生成并入库的缩略图 data URL（圆形头像直接展示）。 */
   thumbnail?: string
+  /** Cosmos organization identifier used as the tenant key. */
+  orgId?: string
   hasEmbedding?: boolean
   hasEmbedding512?: boolean
   width?: number
@@ -122,6 +126,8 @@ export interface Camera {
   resolution?: string
   rotate?: string
   organization?: string
+  /** Cosmos organization identifier used as the tenant key. */
+  orgId?: string
   org_admin?: string
   /** Soft-deleted cameras are hidden from normal camera lists. */
   deleted?: boolean
@@ -185,7 +191,7 @@ export interface CameraAI {
 }
 
 export interface DashboardDefinition {
-  id: 'crane' | 'face' | 'inout' | 'ppe' | 'object' | 'segregation'
+  id: string
   title: string
   subtitle: string
 }

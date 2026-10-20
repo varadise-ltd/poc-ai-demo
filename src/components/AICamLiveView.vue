@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { getCraneLive, getFaceLive, getGateLive, getPortLive, getRoi, listCameras, listScripts, snapshotUrl, streamUrl } from '../api'
+import { fetchTenantAsset, getCraneLive, getFaceLive, getGateLive, getPortLive, getRoi, snapshotUrl, streamUrl } from '../api'
 import type { CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PortLiveInfo, RoiPolygon } from '../api'
 import type { Camera, EventItem, Script } from '../types'
 import { formatDisplayConfidence } from '../confidence'
@@ -32,15 +32,12 @@ const isRunning = computed(() =>
 const previewing = ref(false)
 
 // ---------------------------------------------------------------------------
-// Organization filter (server-side via GET /api/cameras?organization=)
+// The active Org ID is supplied by the API client as X-Organization-Id.
 // ---------------------------------------------------------------------------
-const orgFilter = ref('')
-const orgFilterLoading = ref(false)
 const selectionLoading = ref(true)
-const orgFilterError = ref('')
-const selectionBusy = computed(() => selectionLoading.value || orgFilterLoading.value)
+const selectionBusy = computed(() => selectionLoading.value)
 const selectionError = computed(() =>
-  orgFilterError.value || store.cameraError || store.scriptError || store.cameraAIError,
+  store.cameraError || store.scriptError || store.cameraAIError,
 )
 // null = 未筛选（展示完整摄像机列表）；否则为后端按组织筛选的结果
 const filteredCameras = ref<Camera[] | null>(null)
@@ -48,19 +45,6 @@ const filteredCameras = ref<Camera[] | null>(null)
 const filteredScripts = ref<Script[] | null>(null)
 
 // 组织机构下拉选项：取自摄像机与脚本列表的去重 organization 并集
-const orgOptions = computed(() => {
-  const orgs = new Set<string>()
-  for (const c of store.cameras) {
-    const org = (c.organization ?? '').trim()
-    if (org) orgs.add(org)
-  }
-  for (const s of store.scripts) {
-    const org = (s.organization ?? '').trim()
-    if (org) orgs.add(org)
-  }
-  return [...orgs].sort()
-})
-
 // 摄像机 / 脚本下拉展示数据：筛选态用后端结果，否则用完整列表
 const displayCameras = computed(() => filteredCameras.value ?? store.cameras)
 const displayScripts = computed(() => filteredScripts.value ?? store.scripts)
@@ -75,28 +59,11 @@ const availableScripts = computed<Script[]>(() => {
   return displayScripts.value.filter((s) => cameraModelIds.value.has(s.id))
 })
 
-watch(orgFilter, async (org) => {
-  orgFilterLoading.value = true
-  orgFilterError.value = ''
-  try {
-    if (org) {
-      const [cameras, scriptRes] = await Promise.all([
-        listCameras(undefined, org),
-        listScripts(undefined, org),
-      ])
-      filteredCameras.value = cameras
-      filteredScripts.value = scriptRes.scripts
-    } else {
-      filteredCameras.value = null
-      filteredScripts.value = null
-    }
-  } catch (err) {
-    orgFilterError.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    orgFilterLoading.value = false
-    syncSelectedCamera()
-    syncSelectedModel()
-  }
+watch(() => store.activeOrgId, () => {
+  filteredCameras.value = null
+  filteredScripts.value = null
+  syncSelectedCamera()
+  syncSelectedModel()
 })
 
 function syncSelectedCamera(): void {
@@ -437,7 +404,7 @@ function toggleLabels(): void {
 async function snapshot(): Promise<void> {
   const url = snapshotUrl(store.selectedCamera, store.selectedScriptId, store.previewShowLabels)
   try {
-    const res = await fetch(url)
+    const res = await fetchTenantAsset(url)
     const blob = await res.blob()
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
@@ -489,11 +456,8 @@ onBeforeUnmount(() => {
 
     <div class="toolbar live-toolbar">
       <div class="field">
-        <label for="live-organization">1 · Organization</label>
-        <select id="live-organization" v-model="orgFilter" :disabled="selectionBusy">
-          <option value="">All organizations</option>
-          <option v-for="org in orgOptions" :key="org" :value="org">{{ org }}</option>
-        </select>
+        <label for="live-organization">1 · Active Org ID</label>
+        <input id="live-organization" :value="store.activeOrgId" readonly />
       </div>
       <div class="field">
         <label for="live-camera">2 · Select camera</label>

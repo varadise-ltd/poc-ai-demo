@@ -12,6 +12,8 @@ import type { Alert, Camera, CameraAI, CameraModelRun, EventItem, FaceData, Face
 export type TabId = 'demo' | 'config' | 'dashboard'
 export type ConfigTabId = 'camera' | 'model' | 'face'
 export const store = reactive({
+  // Active tenant. The API client sends this as X-Organization-Id on every request.
+  activeOrgId: api.getActiveOrgId(),
   // Navigation
   activeTab: 'demo' as TabId,
   // Configuration 子页：Camera / AI model / Face management。
@@ -194,6 +196,18 @@ export async function loadScripts(): Promise<void> {
   } finally {
     store.scriptLoading = false
   }
+}
+
+export async function setActiveOrgId(orgId: string): Promise<void> {
+  api.setActiveOrgId(orgId)
+  store.activeOrgId = api.getActiveOrgId()
+  store.selectedCamera = ''
+  store.selectedScriptId = ''
+  store.faceData = []
+  store.cameras = []
+  store.cameraAI = []
+  store.scripts = []
+  await Promise.all([loadScripts(), loadCameras(), loadFaces(), loadCameraAI()])
 }
 
 export async function updateScriptMetaRecord(
@@ -522,10 +536,9 @@ export async function addCameraRecord(
   status: 'online' | 'offline',
   resolution?: string,
   rotate?: string,
-  organization?: string,
   org_admin?: string,
 ): Promise<void> {
-  const cam = await api.createCamera(name, rtmp, status, resolution, rotate, organization, org_admin)
+  const cam = await api.createCamera(name, rtmp, status, resolution, rotate, org_admin)
   store.cameras.push(cam)
   syncCameraMaps()
 }
@@ -545,7 +558,6 @@ export async function updateCameraRecord(
     status?: 'online' | 'offline'
     resolution?: string
     rotate?: string
-    organization?: string
     org_admin?: string
   },
 ): Promise<void> {
@@ -658,7 +670,6 @@ export async function createScriptRecord(fields: {
     name: fields.name,
     base_script_id: fields.baseScriptId,
     description: fields.description,
-    organization: fields.organization,
     scenario: fields.scenario,
   })
   store.scripts.push(script)

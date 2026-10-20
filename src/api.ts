@@ -23,6 +23,34 @@ function resolveBaseUrl(): string {
 
 const BASE_URL: string = resolveBaseUrl()
 
+const ORG_STORAGE_KEY = 'cosmos.activeOrgId'
+const DEFAULT_ORG_ID = import.meta.env.VITE_DEFAULT_ORG_ID || 'default'
+
+/** Active tenant used by all API calls. The backend remains the authority. */
+let activeOrgId = (() => {
+  if (typeof window === 'undefined') return DEFAULT_ORG_ID
+  return window.localStorage.getItem(ORG_STORAGE_KEY)?.trim() || DEFAULT_ORG_ID
+})()
+
+export function getActiveOrgId(): string {
+  return activeOrgId
+}
+
+export function setActiveOrgId(orgId: string): void {
+  activeOrgId = orgId.trim() || DEFAULT_ORG_ID
+  if (typeof window !== 'undefined') window.localStorage.setItem(ORG_STORAGE_KEY, activeOrgId)
+}
+
+function requestInit(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers)
+  headers.set('X-Organization-Id', activeOrgId)
+  return { ...init, headers }
+}
+
+async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, requestInit(init))
+}
+
 /** Absolute backend base URL currently in use (shown in error messages). */
 export function apiBaseUrl(): string {
   return BASE_URL || window.location.origin
@@ -37,6 +65,26 @@ export function apiBaseUrl(): string {
 export function assetUrl(path: string | null | undefined): string {
   if (!path) return ''
   return /^https?:\/\//i.test(path) ? path : `${BASE_URL}${path}`
+}
+
+export interface OrganizationRecord {
+  org_id: string
+  name: string
+  source: string
+  status: 'active' | 'disabled'
+  last_synced_at?: string | null
+}
+
+export async function listOrganizations(): Promise<OrganizationRecord[]> {
+  const res = await request(`${BASE_URL}/api/orgs`)
+  const data = await handle<{ organizations: OrganizationRecord[] }>(res)
+  return data.organizations ?? []
+}
+
+export async function listDashboards(): Promise<{ id: string; title: string; subtitle: string }[]> {
+  const res = await request(`${BASE_URL}/api/dashboard`)
+  const data = await handle<{ dashboards: { id: string; title: string; subtitle: string }[] }>(res)
+  return data.dashboards ?? []
 }
 
 // Dashboard analytics (see /api/dashboard on the backend). The dashboard *list* is
@@ -69,12 +117,13 @@ export async function queryDashboard(
   if (filters.limit !== undefined) query.set('limit', String(filters.limit))
   if (filters.offset !== undefined) query.set('offset', String(filters.offset))
   const qs = query.toString()
-  return handle<DashboardQueryResult>(await fetch(`${BASE_URL}/api/dashboard/${encodeURIComponent(dashboardId)}/query${qs ? `?${qs}` : ''}`))
+  return handle<DashboardQueryResult>(await request(`${BASE_URL}/api/dashboard/${encodeURIComponent(dashboardId)}/query${qs ? `?${qs}` : ''}`))
 }
 
 interface FaceRecord {
   id: number
   name: string
+  org_id?: string
   image_name: string
   image_path: string
   has_embedding: boolean
@@ -107,17 +156,18 @@ interface FaceMutationResult extends FaceRecord {
 }
 
 export function faceImageUrl(id: number): string {
-  return `${BASE_URL}/api/faces/${id}/image`
+  return `${BASE_URL}/api/faces/${id}/image?org_id=${encodeURIComponent(activeOrgId)}`
 }
 
 export function faceEmbeddingImageUrl(faceId: number, embeddingId: number): string {
-  return `${BASE_URL}/api/faces/${faceId}/embeddings/${embeddingId}/image`
+  return `${BASE_URL}/api/faces/${faceId}/embeddings/${embeddingId}/image?org_id=${encodeURIComponent(activeOrgId)}`
 }
 
 function toFaceData(r: FaceRecord): FaceData {
   return {
     id: r.id,
     name: r.name,
+    orgId: r.org_id,
     imageName: r.image_name,
     image: faceImageUrl(r.id),
     thumbnail: r.thumbnail ?? undefined,
@@ -145,7 +195,7 @@ export interface FaceImageInput {
 }
 
 export async function getFaceMeta(): Promise<FaceMeta> {
-  const res = await fetch(`${BASE_URL}/api/faces/meta`)
+  const res = await request(`${BASE_URL}/api/faces/meta`)
   return handle<FaceMeta>(res)
 }
 
@@ -206,7 +256,7 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export async function listFaces(): Promise<FaceData[]> {
-  const res = await fetch(`${BASE_URL}/api/faces`)
+  const res = await request(`${BASE_URL}/api/faces`)
   const data = await handle<FaceRecord[]>(res)
   return data.map(toFaceData)
 }
@@ -223,7 +273,7 @@ export async function createFace(name: string, images: FaceImageInput[]): Promis
     form.append('images', file)
     form.append('angles', angle)
   }
-  const res = await fetch(`${BASE_URL}/api/faces`, { method: 'POST', body: form })
+  const res = await request(`${BASE_URL}/api/faces`, { method: 'POST', body: form })
   const data = await handle<FaceMutationResult>(res)
   return { face: toFaceData(data), validation: data.validation }
 }
@@ -237,13 +287,13 @@ export async function updateFace(id: number, name?: string, images?: FaceImageIn
       form.append('angles', angle)
     }
   }
-  const res = await fetch(`${BASE_URL}/api/faces/${id}`, { method: 'PUT', body: form })
+  const res = await request(`${BASE_URL}/api/faces/${id}`, { method: 'PUT', body: form })
   const data = await handle<FaceMutationResult>(res)
   return { face: toFaceData(data), validation: data.validation }
 }
 
 export async function deleteFace(id: number): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api/faces/${id}`, { method: 'DELETE' })
+  const res = await request(`${BASE_URL}/api/faces/${id}`, { method: 'DELETE' })
   await handle(res)
 }
 
@@ -259,6 +309,7 @@ interface CameraRecord {
   resolution?: string
   rotate?: string
   organization?: string
+  org_id?: string
   org_admin?: string
   deleted?: boolean
   created_at?: string
@@ -274,6 +325,7 @@ function toCamera(r: CameraRecord): Camera {
     resolution: r.resolution,
     rotate: r.rotate,
     organization: r.organization,
+    orgId: r.org_id ?? r.organization,
     org_admin: r.org_admin,
     deleted: r.deleted,
     createdAt: r.created_at,
@@ -284,9 +336,11 @@ function toCamera(r: CameraRecord): Camera {
 export async function listCameras(status?: string, organization?: string): Promise<Camera[]> {
   const q = new URLSearchParams()
   if (status) q.set('status', status)
-  if (organization) q.set('organization', organization)
+  // Legacy callers may still pass an organization filter; the backend scopes
+  // to the active X-Organization-Id and ignores cross-organization values.
+  if (organization) q.set('org_id', organization)
   const qs = q.toString()
-  const res = await fetch(`${BASE_URL}/api/cameras${qs ? `?${qs}` : ''}`)
+  const res = await request(`${BASE_URL}/api/cameras${qs ? `?${qs}` : ''}`)
   const data = await handle<CameraRecord[]>(res)
   return data.map(toCamera)
 }
@@ -297,14 +351,13 @@ export async function createCamera(
   status: 'online' | 'offline',
   resolution?: string,
   rotate?: string,
-  organization?: string,
   org_admin?: string,
 ): Promise<Camera> {
   console.log(`[api] createCamera name=${name} status=${status} rtmp=${redactUrl(rtmp)}`)
-  const res = await fetch(`${BASE_URL}/api/cameras`, {
+  const res = await request(`${BASE_URL}/api/cameras`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, rtmp, status, resolution, rotate, organization, org_admin }),
+      body: JSON.stringify({ name, rtmp, status, resolution, rotate, org_admin }),
   })
   return toCamera(await handle<CameraRecord>(res))
 }
@@ -317,12 +370,11 @@ export async function updateCamera(
     status?: 'online' | 'offline'
     resolution?: string
     rotate?: string
-    organization?: string
     org_admin?: string
   },
 ): Promise<Camera> {
   console.log(`[api] updateCamera id=${id} fields=${JSON.stringify({ ...fields, rtmp: fields.rtmp ? redactUrl(fields.rtmp) : undefined })}`)
-  const res = await fetch(`${BASE_URL}/api/cameras/${id}`, {
+  const res = await request(`${BASE_URL}/api/cameras/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
@@ -331,7 +383,7 @@ export async function updateCamera(
 }
 
 export async function deleteCamera(id: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api/cameras/${id}`, { method: 'DELETE' })
+  const res = await request(`${BASE_URL}/api/cameras/${id}`, { method: 'DELETE' })
   await handle(res)
 }
 
@@ -347,7 +399,7 @@ export interface CameraProbeResult {
 
 export async function probeCamera(url: string): Promise<CameraProbeResult> {
   console.log(`[api] probeCamera url=${redactUrl(url)}`)
-  const res = await fetch(`${BASE_URL}/api/cameras/probe`, {
+  const res = await request(`${BASE_URL}/api/cameras/probe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),
@@ -363,7 +415,7 @@ export interface CameraCheckResult {
 }
 
 export async function checkCameraStream(name: string): Promise<CameraCheckResult> {
-  const res = await fetch(`${BASE_URL}/api/cameras/check`, {
+  const res = await request(`${BASE_URL}/api/cameras/check`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -393,6 +445,7 @@ interface ScriptRecord {
   description?: string | null
   cameras: string[]
   organization?: string | null
+  org_id?: string | null
   scenario?: string | null
   params?: Record<string, ScriptParamRecord>
   kpis?: string[][]
@@ -427,6 +480,7 @@ function toScript(r: ScriptRecord): Script {
     kpis: (r.kpis ?? []).map((kpi) => [kpi[0] ?? '', kpi[1] ?? '', kpi[2] ?? ''] as [string, string, string]),
     description: r.description ?? undefined,
     organization: r.organization ?? undefined,
+    orgId: r.org_id ?? r.organization ?? undefined,
     scenario: r.scenario ?? undefined,
     custom: r.custom ?? false,
     deleted: r.deleted ?? false,
@@ -448,11 +502,11 @@ export async function listScripts(
 ): Promise<{ scripts: Script[]; runs: Record<string, ScriptRun> }> {
   const q = new URLSearchParams()
   if (status) q.set('status', status)
-  if (organization) q.set('organization', organization)
+  if (organization) q.set('org_id', organization)
   if (scenario) q.set('scenario', scenario)
   if (includeDeleted) q.set('include_deleted', 'true')
   const qs = q.toString()
-  const res = await fetch(`${BASE_URL}/api/scripts${qs ? `?${qs}` : ''}`)
+  const res = await request(`${BASE_URL}/api/scripts${qs ? `?${qs}` : ''}`)
   const data = await handle<ScriptRecord[]>(res)
   const scripts = data.map(toScript)
   const runs: Record<string, ScriptRun> = {}
@@ -470,10 +524,10 @@ export async function updateScriptMeta(
   id: string,
   fields: { organization?: string; scenario?: string },
 ): Promise<{ organization?: string; scenario?: string }> {
-  const res = await fetch(`${BASE_URL}/api/scripts/${id}/meta`, {
+  const res = await request(`${BASE_URL}/api/scripts/${id}/meta`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(fields),
+    body: JSON.stringify({ scenario: fields.scenario }),
   })
   return handle<{ organization?: string; scenario?: string }>(res)
 }
@@ -481,7 +535,7 @@ export async function updateScriptMeta(
 export async function runScript(id: string, camera?: string): Promise<ScriptRun> {
   const requestId = newRequestId('run', id, camera)
   console.log(`[run] AI model run requested: script=${id} camera=${camera ?? 'all'} requestId=${requestId}`)
-  const res = await fetch(`${BASE_URL}/api/scripts/${id}/run`, {
+  const res = await request(`${BASE_URL}/api/scripts/${id}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Request-ID': requestId },
     body: JSON.stringify({ camera }),
@@ -493,7 +547,7 @@ export async function stopScript(id: string, camera?: string): Promise<ScriptRun
   const requestId = newRequestId('stop', id, camera)
   console.log(`[run] AI model stop requested: script=${id} camera=${camera ?? 'all'} requestId=${requestId}`)
   const query = camera ? `?camera=${encodeURIComponent(camera)}` : ''
-  const res = await fetch(`${BASE_URL}/api/scripts/${id}/stop${query}`, {
+  const res = await request(`${BASE_URL}/api/scripts/${id}/stop${query}`, {
     method: 'POST',
     headers: { 'X-Request-ID': requestId },
   })
@@ -511,7 +565,7 @@ export async function getScriptStatus(id: string, camera?: string): Promise<Scri
   const q = new URLSearchParams()
   if (camera) q.set('camera', camera)
   const qs = q.toString()
-  const res = await fetch(`${BASE_URL}/api/scripts/${encodeURIComponent(id)}/status${qs ? `?${qs}` : ''}`)
+  const res = await request(`${BASE_URL}/api/scripts/${encodeURIComponent(id)}/status${qs ? `?${qs}` : ''}`)
   return handle<ScriptRun>(res)
 }
 
@@ -521,7 +575,7 @@ export async function getScriptStatus(id: string, camera?: string): Promise<Scri
 
 /** Per-camera run state, including whether the camera is online and startable. */
 export async function listScriptCameras(scriptId: string): Promise<CameraModelRun[]> {
-  const res = await fetch(`${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras`)
+  const res = await request(`${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras`)
   return handle<CameraModelRun[]>(res)
 }
 
@@ -532,7 +586,7 @@ export async function listScriptCameras(scriptId: string): Promise<CameraModelRu
  * `createCameraAI`, so the two pages stay interchangeable.
  */
 export async function assignScriptCamera(scriptId: string, camera: string): Promise<CameraModelRun> {
-  const res = await fetch(
+  const res = await request(
     `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}`,
     { method: 'POST' },
   )
@@ -541,7 +595,7 @@ export async function assignScriptCamera(scriptId: string, camera: string): Prom
 
 /** Unassign a camera from an AI model (stops its worker and drops its ROI). */
 export async function unassignScriptCamera(scriptId: string, camera: string): Promise<void> {
-  const res = await fetch(
+  const res = await request(
     `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}`,
     { method: 'DELETE' },
   )
@@ -553,7 +607,7 @@ export async function runScriptCamera(scriptId: string, camera: string): Promise
   const startedAt = performance.now()
   console.log(`[run] AI model RUN requested: script=${scriptId} camera="${camera}" requestId=${requestId}`)
   try {
-    const res = await fetch(
+    const res = await request(
       `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/run`,
       { method: 'POST', headers: { 'X-Request-ID': requestId } },
     )
@@ -579,7 +633,7 @@ export async function stopScriptCamera(scriptId: string, camera: string): Promis
   const startedAt = performance.now()
   console.log(`[run] AI model STOP requested: script=${scriptId} camera="${camera}" requestId=${requestId}`)
   try {
-    const res = await fetch(
+    const res = await request(
       `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/stop`,
       { method: 'POST', headers: { 'X-Request-ID': requestId } },
     )
@@ -599,12 +653,12 @@ export async function stopScriptCamera(scriptId: string, camera: string): Promis
 }
 
 export async function stopAllScripts(): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api/scripts/stop-all`, { method: 'POST' })
+  const res = await request(`${BASE_URL}/api/scripts/stop-all`, { method: 'POST' })
   await handle(res)
 }
 
 export async function listAlerts(): Promise<Alert[]> {
-  const res = await fetch(`${BASE_URL}/api/alerts`)
+  const res = await request(`${BASE_URL}/api/alerts`)
   return handle<Alert[]>(res)
 }
 
@@ -631,7 +685,7 @@ export async function listHistoryEvents(filters: {
   if (filters.end) q.set('end', filters.end)
   if (filters.limit) q.set('limit', String(filters.limit))
   if (filters.offset) q.set('offset', String(filters.offset))
-  const res = await fetch(`${BASE_URL}/api/alerts?${q.toString()}`)
+  const res = await request(`${BASE_URL}/api/alerts?${q.toString()}`)
   return handle<Alert[]>(res)
 }
 
@@ -652,7 +706,7 @@ export async function countHistoryEvents(filters: {
   if (filters.cameraId && filters.cameraId !== 'all') q.set('camera_id', filters.cameraId)
   if (filters.start) q.set('start', filters.start)
   if (filters.end) q.set('end', filters.end)
-  const res = await fetch(`${BASE_URL}/api/alerts/count?${q.toString()}`)
+  const res = await request(`${BASE_URL}/api/alerts/count?${q.toString()}`)
   const data = await handle<{ total: number }>(res)
   return data.total ?? 0
 }
@@ -681,7 +735,7 @@ function toRoiPolygon(r: { id?: number | null; points?: [number, number][] }): R
 
 export async function getRoi(scriptId: string, camera: string): Promise<RoiInfo> {
   const q = new URLSearchParams({ camera })
-  const res = await fetch(`${BASE_URL}/api/roi/${scriptId}?${q.toString()}`)
+  const res = await request(`${BASE_URL}/api/roi/${scriptId}?${q.toString()}`)
   const data = await handle<{ script_id: string; camera: string | null; rois?: RoiPolygon[]; points?: [number, number][] }>(res)
   // 兼容旧契约：旧后端返回单个 points，而非 rois
   const rois = data.rois?.length
@@ -698,7 +752,7 @@ export async function saveRoi(
   polygons: [number, number][][],
 ): Promise<RoiInfo> {
   console.log(`[api] saveRoi script=${scriptId} camera=${camera} polygons=${polygons.length}`)
-  const res = await fetch(`${BASE_URL}/api/roi`, {
+  const res = await request(`${BASE_URL}/api/roi`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ script_id: scriptId, camera, rois: polygons.map((points) => ({ points })) }),
@@ -714,7 +768,7 @@ export async function saveRoi(
 export async function clearRoi(scriptId: string, camera: string): Promise<void> {
   console.log(`[api] clearRoi script=${scriptId} camera=${camera}`)
   const q = new URLSearchParams({ camera })
-  const res = await fetch(`${BASE_URL}/api/roi/${scriptId}?${q.toString()}`, { method: 'DELETE' })
+  const res = await request(`${BASE_URL}/api/roi/${scriptId}?${q.toString()}`, { method: 'DELETE' })
   await handle(res)
 }
 
@@ -752,7 +806,7 @@ export async function listGateConfigs(cameraId?: string, scriptId?: string): Pro
   if (cameraId) q.set('camera_id', cameraId)
   if (scriptId) q.set('script_id', scriptId)
   const qs = q.toString()
-  const res = await fetch(`${BASE_URL}/api/gates/config${qs ? `?${qs}` : ''}`)
+  const res = await request(`${BASE_URL}/api/gates/config${qs ? `?${qs}` : ''}`)
   const data = await handle<{ gates: GateConfigInfo[] }>(res)
   return data.gates ?? []
 }
@@ -772,7 +826,7 @@ export async function saveGateConfig(gate: {
   negative_role?: 'pedestrian' | 'vehicle'
 }): Promise<GateConfigInfo> {
   console.log(`[api] saveGateConfig camera=${gate.camera_id} script=${gate.script_id} gate=${gate.gate_id} location=${gate.location}`)
-  const res = await fetch(`${BASE_URL}/api/gates/config`, {
+  const res = await request(`${BASE_URL}/api/gates/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled: true, arrow_sign: 1, positive_role: 'pedestrian', negative_role: 'vehicle', ...gate }),
@@ -784,7 +838,7 @@ export async function saveGateConfig(gate: {
 export async function deleteGateConfig(cameraId: string, gateId: string, scriptId?: string): Promise<void> {
   console.log(`[api] deleteGateConfig camera=${cameraId} script=${scriptId} gate=${gateId}`)
   const q = scriptId ? `?script_id=${encodeURIComponent(scriptId)}` : ''
-  const res = await fetch(
+  const res = await request(
     `${BASE_URL}/api/gates/config/${encodeURIComponent(cameraId)}/${encodeURIComponent(gateId)}${q}`,
     { method: 'DELETE' },
   )
@@ -809,7 +863,7 @@ export async function getGateReport(filters: {
   if (filters.granularity) q.set('granularity', filters.granularity)
   if (filters.role) q.set('role', filters.role)
   const qs = q.toString()
-  const res = await fetch(`${BASE_URL}/api/gates/report${qs ? `?${qs}` : ''}`)
+  const res = await request(`${BASE_URL}/api/gates/report${qs ? `?${qs}` : ''}`)
   return handle<GateReport>(res)
 }
 
@@ -894,7 +948,7 @@ export interface GateLiveInfo {
 export async function getGateLive(cameraId: string, scriptId?: string): Promise<GateLiveInfo> {
   const q = new URLSearchParams({ camera_id: cameraId })
   if (scriptId) q.set('script_id', scriptId)
-  const res = await fetch(`${BASE_URL}/api/gates/live?${q.toString()}`)
+  const res = await request(`${BASE_URL}/api/gates/live?${q.toString()}`)
   return handle<GateLiveInfo>(res)
 }
 
@@ -928,7 +982,7 @@ export interface FaceLiveInfo {
 export async function getFaceLive(cameraId: string, scriptId?: string): Promise<FaceLiveInfo> {
   const q = new URLSearchParams({ camera_id: cameraId })
   if (scriptId) q.set('script_id', scriptId)
-  const res = await fetch(`${BASE_URL}/api/faces/live?${q.toString()}`)
+  const res = await request(`${BASE_URL}/api/faces/live?${q.toString()}`)
   return handle<FaceLiveInfo>(res)
 }
 
@@ -962,7 +1016,7 @@ export interface PortLiveInfo {
 export async function getPortLive(cameraId: string, scriptId?: string): Promise<PortLiveInfo> {
   const q = new URLSearchParams({ camera_id: cameraId })
   if (scriptId) q.set('script_id', scriptId)
-  const res = await fetch(`${BASE_URL}/api/port/live?${q.toString()}`)
+  const res = await request(`${BASE_URL}/api/port/live?${q.toString()}`)
   return handle<PortLiveInfo>(res)
 }
 
@@ -982,7 +1036,7 @@ export interface CraneLiveInfo {
 export async function getCraneLive(cameraId: string, scriptId?: string): Promise<CraneLiveInfo> {
   const q = new URLSearchParams({ camera_id: cameraId })
   if (scriptId) q.set('script_id', scriptId)
-  const res = await fetch(`${BASE_URL}/api/port/crane/live?${q.toString()}`)
+  const res = await request(`${BASE_URL}/api/port/crane/live?${q.toString()}`)
   return handle<CraneLiveInfo>(res)
 }
 
@@ -996,13 +1050,18 @@ export function streamUrl(camera: string, scriptId: string, annotate: boolean, r
     script_id: scriptId,
     annotate: String(annotate),
     roi_overlay: String(roiOverlay),
+    org_id: activeOrgId,
   })
   return `${BASE_URL}/api/stream?${q.toString()}`
 }
 
 export function snapshotUrl(camera: string, scriptId: string, annotate: boolean): string {
-  const q = new URLSearchParams({ camera, script_id: scriptId, annotate: String(annotate) })
+  const q = new URLSearchParams({ camera, script_id: scriptId, annotate: String(annotate), org_id: activeOrgId })
   return `${BASE_URL}/api/stream/snapshot?${q.toString()}`
+}
+
+export async function fetchTenantAsset(url: string): Promise<Response> {
+  return request(url)
 }
 
 // ---------------------------------------------------------------------------
@@ -1017,10 +1076,9 @@ export async function createScript(fields: {
   name: string
   base_script_id: string
   description?: string
-  organization?: string
   scenario?: string
 }): Promise<Script> {
-  const res = await fetch(`${BASE_URL}/api/scripts`, {
+  const res = await request(`${BASE_URL}/api/scripts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
@@ -1030,13 +1088,13 @@ export async function createScript(fields: {
 
 /** Soft-delete one AI model (restorable through `restoreScript`). */
 export async function deleteScript(id: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api/scripts/${id}`, { method: 'DELETE' })
+  const res = await request(`${BASE_URL}/api/scripts/${id}`, { method: 'DELETE' })
   await handle(res)
 }
 
 /** Bring a soft-deleted AI model back into the catalog. */
 export async function restoreScript(id: string): Promise<Script> {
-  const res = await fetch(`${BASE_URL}/api/scripts/${id}/restore`, { method: 'POST' })
+  const res = await request(`${BASE_URL}/api/scripts/${id}/restore`, { method: 'POST' })
   return toScript(await handle<ScriptRecord>(res))
 }
 
@@ -1065,7 +1123,7 @@ function toCameraAI(r: CameraAIRecord): CameraAI {
 }
 
 export async function listCameraAI(): Promise<CameraAI[]> {
-  const res = await fetch(`${BASE_URL}/api/camera-ai`)
+  const res = await request(`${BASE_URL}/api/camera-ai`)
   const data = await handle<CameraAIRecord[]>(res)
   return data.map(toCameraAI)
 }
@@ -1078,7 +1136,7 @@ export async function createCameraAI(fields: {
   output?: string
   params?: Record<string, number | boolean>
 }): Promise<CameraAI> {
-  const res = await fetch(`${BASE_URL}/api/camera-ai`, {
+  const res = await request(`${BASE_URL}/api/camera-ai`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ camera: fields.camera, script_id: fields.scriptId, name: fields.name, enabled: fields.enabled, output: fields.output, params: fields.params }),
@@ -1090,7 +1148,7 @@ export async function updateCameraAI(
   iid: number,
   fields: { name?: string; enabled?: boolean; output?: string; params?: Record<string, number | boolean> },
 ): Promise<CameraAI> {
-  const res = await fetch(`${BASE_URL}/api/camera-ai/${iid}`, {
+  const res = await request(`${BASE_URL}/api/camera-ai/${iid}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
@@ -1099,6 +1157,6 @@ export async function updateCameraAI(
 }
 
 export async function deleteCameraAI(iid: number): Promise<void> {
-  const res = await fetch(`${BASE_URL}/api/camera-ai/${iid}`, { method: 'DELETE' })
+  const res = await request(`${BASE_URL}/api/camera-ai/${iid}`, { method: 'DELETE' })
   await handle(res)
 }

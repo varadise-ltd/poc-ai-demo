@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { assetUrl, listCameras, listFaces, queryDashboard } from '../api'
+import { assetUrl, listCameras, listDashboards, listFaces, queryDashboard } from '../api'
 import type { Camera, DashboardDefinition, DashboardQueryResult, FaceData } from '../types'
 import { formatDisplayConfidence } from '../confidence'
+import { store } from '../store'
 
 const defaultDashboards: DashboardDefinition[] = [
   { id: 'crane', title: 'Crane Loading', subtitle: 'Crane + Truck monitoring' },
@@ -253,10 +254,32 @@ function displayConfidence(value: number | null): string {
 }
 
 onMounted(async () => {
-  const [cameraResponse, facesResponse] = await Promise.allSettled([listCameras(), listFaces()])
+  const [cameraResponse, facesResponse, dashboardResponse] = await Promise.allSettled([listCameras(), listFaces(), listDashboards()])
   if (cameraResponse.status === 'fulfilled') cameras.value = cameraResponse.value
   if (facesResponse.status === 'fulfilled') faceLibrary.value = facesResponse.value
+  if (dashboardResponse.status === 'fulfilled' && dashboardResponse.value.length) {
+    dashboards.value = dashboardResponse.value as DashboardDefinition[]
+    if (!dashboards.value.some((dashboard) => dashboard.id === selectedId.value)) {
+      selectedId.value = dashboards.value[0].id
+    }
+  }
 })
+
+watch(
+  () => store.activeOrgId,
+  async () => {
+    const [cameraResponse, facesResponse, dashboardResponse] = await Promise.allSettled([listCameras(), listFaces(), listDashboards()])
+    if (cameraResponse.status === 'fulfilled') cameras.value = cameraResponse.value
+    if (facesResponse.status === 'fulfilled') faceLibrary.value = facesResponse.value
+    if (dashboardResponse.status === 'fulfilled' && dashboardResponse.value.length) {
+      dashboards.value = dashboardResponse.value as DashboardDefinition[]
+      selectedId.value = dashboards.value.some((dashboard) => dashboard.id === selectedId.value)
+        ? selectedId.value
+        : dashboards.value[0].id
+    }
+    await loadDashboard()
+  },
+)
 
 // ---------------------------------------------------------------------------
 // Crane Loading dashboard (design preview, demo data)
