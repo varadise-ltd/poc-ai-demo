@@ -13,6 +13,7 @@ const name = ref('')
 const rtmp = ref('')
 const resolution = ref('1920 × 1080')
 const rotate = ref('0°')
+const orgId = ref('')
 const orgAdmin = ref('')
 const saving = ref(false)
 const error = ref('')
@@ -30,6 +31,7 @@ const checking = ref(false)
 const nameError = ref('')
 const resolutionError = ref('')
 const rotateError = ref('')
+const orgIdError = ref('')
 const orgAdminError = ref('')
 
 // 「Check stream」成功标志：仅当「当前 URL」已探测成功才为 true。
@@ -49,11 +51,13 @@ watch(
     nameError.value = ''
     resolutionError.value = ''
     rotateError.value = ''
+    orgIdError.value = ''
     orgAdminError.value = ''
     name.value = store.cameraEditorName
     rtmp.value = store.cameraEditorRtmp
     resolution.value = store.cameraEditorResolution
     rotate.value = store.cameraEditorRotate
+    orgId.value = store.cameraEditorOrgId || store.activeOrgId
     orgAdmin.value = store.cameraEditorOrgAdmin
   },
 )
@@ -128,6 +132,14 @@ function validateOrgAdmin(value: string): string | null {
   return null
 }
 
+function validateOrgId(value: string): string | null {
+  const v = value.trim()
+  if (!v) return 'Active Org ID is required.'
+  if (v.length > ORG_MAX) return `Active Org ID must be ${ORG_MAX} characters or fewer.`
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(v)) return 'Active Org ID contains invalid characters.'
+  return null
+}
+
 // 后端探测：host 可达性 + 能否打开为视频流（读取一帧）
 async function validateStream(): Promise<boolean> {
   checking.value = true
@@ -186,6 +198,10 @@ function onOrgAdminInput(): void {
   if (orgAdminError.value) orgAdminError.value = validateOrgAdmin(orgAdmin.value) ?? ''
 }
 
+function onOrgIdInput(): void {
+  if (orgIdError.value) orgIdError.value = validateOrgId(orgId.value) ?? ''
+}
+
 async function save(): Promise<void> {
   error.value = ''
 
@@ -193,11 +209,13 @@ async function save(): Promise<void> {
   nameError.value = validateName(name.value) ?? ''
   resolutionError.value = validateResolution(resolution.value) ?? ''
   rotateError.value = validateRotate(rotate.value) ?? ''
+  orgIdError.value = validateOrgId(orgId.value) ?? ''
   orgAdminError.value = validateOrgAdmin(orgAdmin.value) ?? ''
   if (
     nameError.value ||
     resolutionError.value ||
     rotateError.value ||
+    orgIdError.value ||
     orgAdminError.value
   ) {
     return
@@ -238,6 +256,7 @@ async function save(): Promise<void> {
         rtmp: rtmp.value.trim(),
         resolution: resolution.value,
         rotate: rotate.value,
+        org_id: orgId.value.trim(),
         org_admin: orgAdmin.value.trim(),
       })
     }
@@ -316,7 +335,13 @@ async function save(): Promise<void> {
           </div>
           <div class="field full">
             <label>Active Org ID</label>
-            <input :value="store.activeOrgId" readonly />
+            <input
+              v-model="orgId"
+              :class="{ invalid: !!orgIdError }"
+              placeholder="e.g. org-001"
+              @input="onOrgIdInput"
+            />
+            <div v-if="orgIdError" class="rtmp-hint" style="color: var(--red)">{{ orgIdError }}</div>
           </div>
           <div class="field full">
             <label>Organization admin</label>

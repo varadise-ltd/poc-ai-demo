@@ -88,7 +88,7 @@ export const store = reactive({
   cameraEditorRtmp: '',
   cameraEditorResolution: '1920 × 1080',
   cameraEditorRotate: '0°',
-  cameraEditorOrganization: '',
+  cameraEditorOrgId: '',
   cameraEditorOrgAdmin: '',
   cameraEditorChanged: false,
   cameraEditorMode: 'edit' as 'add' | 'edit',
@@ -558,6 +558,7 @@ export async function updateCameraRecord(
     status?: 'online' | 'offline'
     resolution?: string
     rotate?: string
+    org_id?: string
     org_admin?: string
   },
 ): Promise<void> {
@@ -565,7 +566,10 @@ export async function updateCameraRecord(
   const renamed = !!fields.name && !!previous && fields.name !== previous.name
   const cam = await api.updateCamera(id, fields)
   const idx = store.cameras.findIndex((c) => c.id === id)
-  if (idx >= 0) store.cameras.splice(idx, 1, cam)
+  if (idx >= 0) {
+    if (cam.orgId && cam.orgId !== store.activeOrgId) store.cameras.splice(idx, 1)
+    else store.cameras.splice(idx, 1, cam)
+  }
   syncCameraMaps()
   if (renamed) await refreshAssignments()
 }

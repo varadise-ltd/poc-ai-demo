@@ -114,7 +114,7 @@ function openCameraEditor(cam: Camera): void {
   store.cameraEditorRtmp = cam.rtmp
   store.cameraEditorResolution = cam.resolution ?? '1920 × 1080'
   store.cameraEditorRotate = cam.rotate ?? '0°'
-  store.cameraEditorOrganization = cam.organization ?? ''
+  store.cameraEditorOrgId = cam.orgId ?? cam.organization ?? store.activeOrgId
   store.cameraEditorOrgAdmin = cam.org_admin ?? ''
   store.cameraEditorChanged = false
   store.showCameraEditor = true
@@ -128,7 +128,7 @@ function addCamera(): void {
   store.cameraEditorRtmp = ''
   store.cameraEditorResolution = '1920 × 1080'
   store.cameraEditorRotate = '0°'
-  store.cameraEditorOrganization = ''
+  store.cameraEditorOrgId = store.activeOrgId
   store.cameraEditorOrgAdmin = ''
   store.cameraEditorChanged = false
   store.showCameraEditor = true

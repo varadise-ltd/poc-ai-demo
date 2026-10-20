@@ -370,6 +370,7 @@ export async function updateCamera(
     status?: 'online' | 'offline'
     resolution?: string
     rotate?: string
+    org_id?: string
     org_admin?: string
   },
 ): Promise<Camera> {
