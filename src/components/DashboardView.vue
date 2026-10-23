@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { assetUrl, listCameras, listDashboards, listFaces, queryDashboard } from '../api'
+import { assetUrl, listCameras, listDashboards, listFaces, queryCraneDashboard, queryDashboard } from '../api'
+import type { CraneDashboardSession } from '../api'
 import type { Camera, DashboardDefinition, DashboardQueryResult, FaceData } from '../types'
 import { formatDisplayConfidence } from '../confidence'
 import { store } from '../store'
@@ -232,6 +233,7 @@ async function changePageSize(value: string): Promise<void> {
 async function selectDashboard(id: string): Promise<void> {
   selectedId.value = id
   resetFilters()
+  if (id === 'crane' && !craneLoaded.value) await loadCraneDashboard()
 }
 
 function formatTime(value: string): string {
@@ -263,6 +265,7 @@ onMounted(async () => {
       selectedId.value = dashboards.value[0].id
     }
   }
+  if (selectedId.value === 'crane') await loadCraneDashboard()
 })
 
 watch(
@@ -278,11 +281,12 @@ watch(
         : dashboards.value[0].id
     }
     await loadDashboard()
+    if (selectedId.value === 'crane') await loadCraneDashboard()
   },
 )
 
 // ---------------------------------------------------------------------------
-// Crane Loading dashboard (design preview, demo data)
+// Crane Loading dashboard
 // Truck Camera supplies entry/exit; Crane Camera supplies loading start/end.
 // ---------------------------------------------------------------------------
 interface CraneSession {
@@ -293,54 +297,21 @@ interface CraneSession {
   exit: string
   loadingStart: string
   loadingEnd: string
+  dwellSeconds: number | null
+  cycleSeconds: number | null
 }
 
-const craneCameras = ['Truck Camera 01', 'Gantry Crane Camera 01', 'Gantry Crane Camera 02']
+const craneCameras = ref<string[]>([])
 
-function localISO(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
-
-function craneSeed(): CraneSession[] {
-  const out: CraneSession[] = []
-  let seed = 42
-  const rnd = () => {
-    seed = (seed * 1103515245 + 12345) % 2147483648
-    return seed / 2147483648
-  }
-  const dwellPlan = [3, 6, 8, 11, 13, 16, 19, 22, 26, 31, 9, 14, 17, 21, 28, 35, 4, 7, 12, 18, 24, 29, 33, 38]
-  let id = 0
-  for (let day = 2; day <= 5; day++) {
-    const perDay = 18 + Math.floor(rnd() * 8)
-    for (let i = 0; i < perDay; i++) {
-      id++
-      const craneCam = id % 3 === 0 ? 'Gantry Crane Camera 02' : 'Gantry Crane Camera 01'
-      const entry = new Date(2026, 9, day, 7 + Math.floor((i * 10) / perDay), Math.floor(rnd() * 55), Math.floor(rnd() * 60))
-      const dwellSec = dwellPlan[id % dwellPlan.length] * 60 + Math.floor(rnd() * 59)
-      const gapSec = (2 + Math.floor(rnd() * 3)) * 60 + Math.floor(rnd() * 59)
-      const cycleSec = (3 + Math.floor(rnd() * 8)) * 60 + Math.floor(rnd() * 59)
-      const loadingStart = new Date(entry.getTime() + gapSec * 1000)
-      const loadingEnd = new Date(loadingStart.getTime() + cycleSec * 1000)
-      const exit = new Date(entry.getTime() + dwellSec * 1000)
-      out.push({
-        id: `L-${String(id).padStart(3, '0')}`,
-        truckCamera: 'Truck Camera 01',
-        craneCamera: craneCam,
-        entry: localISO(entry),
-        exit: localISO(exit),
-        loadingStart: localISO(loadingStart),
-        loadingEnd: localISO(loadingEnd),
-      })
-    }
-  }
-  return out
-}
-
-const craneSessions: CraneSession[] = craneSeed()
+const craneSessions = ref<CraneSession[]>([])
+const craneAppliedCameras = ref<string[]>([])
+const craneLoading = ref(false)
+const craneError = ref('')
+const craneLoaded = ref(false)
+const craneCameraDetails = ref<HTMLDetailsElement | null>(null)
 
 const craneState = reactive({
-  cameras: [...craneCameras] as string[],
+  cameras: [] as string[],
   dwellBin: null as number | null,
   dwellPage: 1,
   cycleSessionId: null as string | null,
@@ -350,18 +321,38 @@ const craneState = reactive({
 const CRANE_PAGE_SIZE = 5
 const DWELL_BINS = [0, 300, 600, 900, 1200, 1500, 1800, Infinity]
 
-function diffSeconds(a: string, b: string): number {
-  return Math.max(0, Math.round((new Date(b).getTime() - new Date(a).getTime()) / 1000))
+/** Seconds between two timestamps, or null when either side is missing. */
+function durationSeconds(a: string, b: string): number | null {
+  if (!a || !b) return null
+  const from = new Date(a).getTime()
+  const to = new Date(b).getTime()
+  if (Number.isNaN(from) || Number.isNaN(to)) return null
+  return Math.max(0, Math.round((to - from) / 1000))
+}
+
+/** Truck dwell: prefer the fact stored by the truck model, else derive it. */
+function sessionDwell(session: CraneSession): number | null {
+  return session.dwellSeconds ?? durationSeconds(session.entry, session.exit)
+}
+
+/** Crane cycle: only sessions with a real loading window have one. */
+function sessionCycle(session: CraneSession): number | null {
+  return session.cycleSeconds ?? durationSeconds(session.loadingStart, session.loadingEnd)
+}
+
+function fmtClock(value: string): string {
+  return value.length >= 16 ? value.slice(11, 16) : '—'
 }
 
 function fmtDuration(sec: number | null): string {
   if (sec == null) return '—'
   const m = Math.floor(sec / 60)
-  const s = sec % 60
+  const s = Math.round(sec % 60)
   return `${m} min ${String(s).padStart(2, '0')} sec`
 }
 
 function fmtDateTime(value: string): string {
+  if (!value) return '—'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
 }
@@ -370,66 +361,76 @@ function dwellBinLabel(i: number): string {
   return i >= 6 ? '≥30' : `${i * 5}–<${(i + 1) * 5}`
 }
 
-const craneFilteredSessions = computed(() =>
-  craneSessions.filter((s) => craneState.cameras.includes(s.truckCamera) || craneState.cameras.includes(s.craneCamera)),
-)
+// The KPI cards, dwell histogram and loading-cycle trend are computed in
+// PostgreSQL (see backend ``crane_dashboard``); the browser only renders them.
+// ``craneSessions`` is now a single paged slice (LIMIT/OFFSET), so these
+// aggregates can no longer be derived from it.
+const craneSummaryData = ref({ total: 0, avgDwellSeconds: null as number | null, avgCycleSeconds: null as number | null })
+const craneDwellDist = ref<{ counts: number[]; maxBin: number }>({ counts: DWELL_BINS.slice(0, 7).map(() => 0), maxBin: 1 })
+const craneTrendSessions = ref<CraneSession[]>([])
+const craneDwellDrillSessions = ref<CraneSession[]>([])
+
+const craneFilteredSessions = computed(() => craneSessions.value)
 
 const craneTrendRows = computed(() =>
-  craneFilteredSessions.value.filter((s) => !craneState.trendDate || s.loadingEnd.slice(0, 10) === craneState.trendDate),
+  craneTrendSessions.value.filter(
+    (s) => !craneState.trendDate || s.loadingEnd.slice(0, 10) === craneState.trendDate,
+  ),
 )
 
 const craneDateOptions = computed(() => {
-  const dates = new Set(craneFilteredSessions.value.map((s) => s.loadingEnd.slice(0, 10)))
+  const dates = new Set(
+    craneTrendSessions.value
+      .filter((s) => s.loadingEnd)
+      .map((s) => s.loadingEnd.slice(0, 10)),
+  )
   return [...dates].sort()
 })
 
-const craneDwellDistribution = computed(() => {
-  const rows = craneFilteredSessions.value
-  const counts = DWELL_BINS.slice(0, 7).map((min, i) =>
-    rows.filter((s) => {
-      const d = diffSeconds(s.entry, s.exit)
-      return d >= min && d < DWELL_BINS[i + 1]
-    }).length,
-  )
-  const maxBin = Math.max(1, ...counts)
-  return { counts, maxBin }
-})
+const craneDwellDistribution = computed(() => craneDwellDist.value)
 
-const craneSummary = computed(() => {
-  const rows = craneFilteredSessions.value
-  const dwell = rows.map((s) => diffSeconds(s.entry, s.exit))
-  const cycles = rows.map((s) => diffSeconds(s.loadingStart, s.loadingEnd))
-  const average = (values: number[]) =>
-    values.length ? fmtDuration(Math.round(values.reduce((a, b) => a + b, 0) / values.length)) : '—'
-  return { total: rows.length, avgDwell: average(dwell), avgCycle: average(cycles) }
-})
+function fmtAvgDuration(sec: number | null): string {
+  if (sec == null || sec <= 0) return '—'
+  return fmtDuration(Math.round(sec))
+}
+
+const craneSummary = computed(() => ({
+  total: craneSummaryData.value.total,
+  avgDwell: fmtAvgDuration(craneSummaryData.value.avgDwellSeconds),
+  avgCycle: fmtAvgDuration(craneSummaryData.value.avgCycleSeconds),
+}))
 
 // Loading cycle trend points (SVG scatter) + dwell drill + cycle drill.
+// The Y axis scales to the longest real cycle so a 25-minute cycle is not
+// flattened against a hard-coded 10-minute ceiling.
+const craneTrendTopMinutes = computed(() => {
+  const maxSeconds = Math.max(0, ...craneTrendRows.value.map((s) => sessionCycle(s) ?? 0))
+  return Math.max(10, Math.ceil(maxSeconds / 60 / 2) * 2)
+})
+
 const craneTrendPoints = computed(() => {
   const rows = craneTrendRows.value
   const total = rows.length
-  return rows.map((s, i) => ({
-    x: total <= 1 ? 360 : 55 + (i * 610) / (total - 1),
-    y: 190 - (diffSeconds(s.loadingStart, s.loadingEnd) / 600) * 150,
-    seconds: diffSeconds(s.loadingStart, s.loadingEnd),
-    session: s,
-    active: craneState.cycleSessionId === s.id,
-  }))
-})
-
-const craneDwellMatches = computed(() => {
-  if (craneState.dwellBin == null) return []
-  const min = DWELL_BINS[craneState.dwellBin]
-  const max = DWELL_BINS[craneState.dwellBin + 1]
-  return craneFilteredSessions.value.filter((s) => {
-    const d = diffSeconds(s.entry, s.exit)
-    return d >= min && d < max
+  const span = craneTrendTopMinutes.value * 60
+  return rows.map((s, i) => {
+    const seconds = sessionCycle(s) ?? 0
+    return {
+      x: total <= 1 ? 360 : 55 + (i * 610) / (total - 1),
+      y: Math.max(30, Math.min(190, 190 - (seconds / span) * 150)),
+      seconds,
+      session: s,
+      active: craneState.cycleSessionId === s.id,
+    }
   })
 })
 
+const craneDwellMatches = computed(() => craneDwellDrillSessions.value)
+
 const craneCycleMatch = computed(() => {
   if (!craneState.cycleSessionId) return null
-  return craneFilteredSessions.value.find((s) => s.id === craneState.cycleSessionId) ?? null
+  return craneTrendSessions.value.find((s) => s.id === craneState.cycleSessionId)
+    ?? craneSessions.value.find((s) => s.id === craneState.cycleSessionId)
+    ?? null
 })
 
 function cranePaged(sessions: CraneSession[], page: number): CraneSession[] {
@@ -447,11 +448,16 @@ function toggleCraneCamera(camera: string): void {
 }
 
 function selectAllCraneCameras(): void {
-  craneState.cameras = [...craneCameras]
+  craneState.cameras = [...craneCameras.value]
+}
+
+function closeCraneCameraMenu(): void {
+  if (craneCameraDetails.value) craneCameraDetails.value.open = false
 }
 
 function resetCraneFilters(): void {
-  craneState.cameras = [...craneCameras]
+  craneState.cameras = [...craneCameras.value]
+  craneAppliedCameras.value = [...craneCameras.value]
   craneState.dwellBin = null
   craneState.dwellPage = 1
   craneState.cycleSessionId = null
@@ -461,9 +467,12 @@ function resetCraneFilters(): void {
 function selectCraneDwellBin(i: number): void {
   if (craneState.dwellBin === i) {
     craneState.dwellBin = null
+    craneDwellDrillSessions.value = []
   } else {
     craneState.dwellBin = i
     craneState.dwellPage = 1
+    // 后端按 dwell_bin 在 SQL 内过滤并分页返回匹配会话，前端不再本地过滤。
+    void loadCraneDashboard()
   }
 }
 
@@ -479,19 +488,93 @@ function setCraneTrendDate(value: string): void {
   craneState.trendDate = value
 }
 
+function craneRange(): { start: string; end: string } {
+  return currentRange()
+}
+
+async function loadCraneDashboard(): Promise<void> {
+  craneError.value = ''
+  if (customRangeError.value) {
+    craneError.value = customRangeError.value
+    return
+  }
+  const selectedCameras = [...craneState.cameras]
+  const dwellBin = craneState.dwellBin
+  closeCraneCameraMenu()
+  craneLoading.value = true
+  try {
+    const { start, end } = craneRange()
+    const cameraId = selectedCameras.length && selectedCameras.length !== craneCameras.value.length
+      ? selectedCameras.join(',')
+      : undefined
+    const response = await queryCraneDashboard({ start, end, cameraId, projectId: store.projectId, dwellBin })
+
+    // SQL 计算好的 KPI / 直方图 / 趋势，直接落为渲染数据（不再本地重算）。
+    craneSummaryData.value = {
+      total: response.total,
+      avgDwellSeconds: response.stats[1]?.value ?? null,
+      avgCycleSeconds: response.stats[2]?.value ?? null,
+    }
+    craneDwellDist.value = response.dwell_distribution ?? { counts: DWELL_BINS.slice(0, 7).map(() => 0), maxBin: 1 }
+
+    const mapSession = (session: CraneDashboardSession): CraneSession => ({
+      id: session.id,
+      truckCamera: session.truck_camera || '',
+      craneCamera: session.crane_camera || '',
+      entry: session.entry || '',
+      exit: session.exit || '',
+      loadingStart: session.loading_start || '',
+      loadingEnd: session.loading_end || '',
+      dwellSeconds: session.dwell_seconds ?? null,
+      cycleSeconds: session.cycle_seconds ?? null,
+    })
+
+    craneSessions.value = (response.sessions || []).map(mapSession)
+    craneTrendSessions.value = (response.trend || []).map(mapSession)
+    // dwell_bin 下钻时，sessions 已由后端按桶过滤，直接作为钻取列表。
+    craneDwellDrillSessions.value = dwellBin != null ? (response.sessions || []).map(mapSession) : []
+
+    // 摄像机下拉列表来自后端 SQL（全窗口去重），不受分页影响。
+    craneCameras.value = response.cameras ?? []
+    const available = new Set(craneCameras.value)
+    const kept = craneState.cameras.filter((name) => available.has(name))
+    craneState.cameras = kept.length ? kept : [...craneCameras.value]
+    craneAppliedCameras.value = selectedCameras.filter((name) => available.has(name))
+    if (!craneAppliedCameras.value.length) craneAppliedCameras.value = [...craneCameras.value]
+    craneState.dwellPage = 1
+    craneState.cycleSessionId = null
+    craneState.trendDate = ''
+    craneLoaded.value = true
+  } catch (err) {
+    craneError.value = err instanceof Error ? err.message : String(err)
+    craneSessions.value = []
+    craneCameras.value = []
+    craneState.cameras = []
+    craneTrendSessions.value = []
+    craneDwellDrillSessions.value = []
+  } finally {
+    craneLoading.value = false
+  }
+}
+
+// The range preset is shared across dashboards; re-query the fact tables when it
+// changes so the Crane page always reflects the visible time window.
+watch([rangePreset, customStart, customEnd], () => {
+  if (selectedId.value === 'crane') void loadCraneDashboard()
+})
 // Event list for a session (dwell scope = truck events, cycle scope = crane events).
 function craneSessionEvents(session: CraneSession, scope: 'dwell' | 'cycle') {
-  const dwell = diffSeconds(session.entry, session.exit)
-  const cycle = diffSeconds(session.loadingStart, session.loadingEnd)
+  const cam = (value: string) => value || '—'
   if (scope === 'dwell') {
     return [
-      { ts: session.exit, type: 'Truck Exit', cam: session.truckCamera, dur: dwell },
-      { ts: session.entry, type: 'Truck Entry', cam: session.truckCamera, dur: null as number | null },
+      { ts: session.exit, type: 'Truck Exit', cam: cam(session.truckCamera), dur: sessionDwell(session) },
+      { ts: session.entry, type: 'Truck Entry', cam: cam(session.truckCamera), dur: null as number | null },
     ].sort((a, b) => b.ts.localeCompare(a.ts))
   }
+  if (sessionCycle(session) == null) return []
   return [
-    { ts: session.loadingEnd, type: 'Loading End', cam: session.craneCamera, dur: cycle },
-    { ts: session.loadingStart, type: 'Loading Start', cam: session.craneCamera, dur: null as number | null },
+    { ts: session.loadingEnd, type: 'Loading End', cam: cam(session.craneCamera), dur: sessionCycle(session) },
+    { ts: session.loadingStart, type: 'Loading Start', cam: cam(session.craneCamera), dur: null as number | null },
   ].sort((a, b) => b.ts.localeCompare(a.ts))
 }
 
@@ -537,13 +620,36 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
 
         <!-- ===================== Crane Loading dashboard ===================== -->
         <template v-if="selectedId === 'crane'">
-          <p class="subtitle crane-note">
-            Sample data: 02–05 Oct 2026. Camera selection includes linked truck/loading sessions; event history shows events from selected cameras only.
-          </p>
+          <p class="subtitle crane-note">Truck dwell and crane loading cycles from truck and gantry crane cameras.</p>
           <div class="dash-filters">
+            <div class="dash-filter dash-time-filter">
+              <label>Date range</label>
+              <div class="time-range-control">
+                <span class="time-range-icon">◷</span>
+                <select aria-label="Date range" v-model="rangePreset">
+                  <option value="today">Today</option>
+                  <option value="7d">Last 7 days</option>
+                  <option value="30d">Last 30 days</option>
+                  <option value="mtd">Month to date</option>
+                  <option value="custom">Custom range</option>
+                </select>
+                <span class="time-range-caret">▾</span>
+              </div>
+              <div v-if="rangePreset === 'custom'" class="custom-range">
+                <div class="custom-range-field">
+                  <label>Start date</label>
+                  <input v-model="customStart" type="date" :max="customEnd || undefined" />
+                </div>
+                <div class="custom-range-field">
+                  <label>End date</label>
+                  <input v-model="customEnd" type="date" :min="customStart || undefined" />
+                </div>
+              </div>
+              <p v-if="customRangeError" class="custom-range-error">{{ customRangeError }}</p>
+            </div>
             <div class="dash-filter crane-camera-filter">
               <label>Camera · multi-select</label>
-              <details class="crane-camera-details">
+                <details ref="craneCameraDetails" class="crane-camera-details">
                 <summary class="crane-camera-display">
                   {{ craneState.cameras.length === craneCameras.length ? 'All cameras' : craneState.cameras.length ? `${craneState.cameras.length} cameras selected` : 'Select cameras' }}
                 </summary>
@@ -559,13 +665,16 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
                 </div>
               </details>
             </div>
-            <button class="btn primary dashboard-search" @click="resetCraneFilters">Reset</button>
+            <button class="btn primary dashboard-search" :disabled="craneLoading || !!customRangeError" @click="() => void loadCraneDashboard()">{{ craneLoading ? 'Loading…' : 'Search' }}</button>
+            <button class="btn dashboard-reset" @click="resetCraneFilters">Reset</button>
           </div>
 
-          <div v-if="!craneState.cameras.length" class="dashboard-empty-state">
-            Select at least one camera to view the loading sessions.
-          </div>
+          <p v-if="craneError" class="form-error dashboard-api-error" role="alert">Crane Loading data is unavailable ({{ craneError }}).</p>
+          <div v-else-if="craneLoading && !craneLoaded" class="detail-empty">Loading crane sessions…</div>
           <template v-else>
+            <p v-if="craneLoaded && !craneSessions.length" class="detail-empty crane-empty-state">
+              No truck visits or crane cycles recorded for this organization in the selected range.
+            </p>
             <div class="dash-stats crane-dash-stats kpi-count-3">
               <div class="dash-stat">
                 <div class="dash-stat-label">Truck visits</div>
@@ -647,7 +756,7 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
                 <svg viewBox="0 0 720 240" role="img" aria-label="Loading cycle duration in minutes by completion time">
                   <text x="14" y="20">min</text>
                   <line v-for="n in 6" :key="n" x1="45" :y1="190 - (n - 1) * 30" x2="690" :y2="190 - (n - 1) * 30" stroke="#e3e8ed" />
-                  <text v-for="n in 6" :key="'t' + n" x="32" :y="194 - (n - 1) * 30" text-anchor="end">{{ (n - 1) * 2 }}</text>
+                  <text v-for="n in 6" :key="'t' + n" x="32" :y="194 - (n - 1) * 30" text-anchor="end">{{ ((n - 1) * craneTrendTopMinutes) / 5 }}</text>
                   <polyline fill="none" stroke="#f0b98c" stroke-width="1.6" :points="craneTrendPoints.map((p) => `${p.x},${p.y}`).join(' ')" />
                   <g
                     v-for="(point, i) in craneTrendPoints"
@@ -663,7 +772,7 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
                       :stroke="point.active ? '#0d2538' : '#fff'"
                       stroke-width="2"
                     >
-                      <title>Cycle {{ fmtDuration(point.seconds) }} · {{ point.session.loadingEnd.slice(11, 16) }}</title>
+                      <title>Cycle {{ fmtDuration(point.seconds) }} · {{ fmtClock(point.session.loadingEnd) }}</title>
                     </circle>
                     <text
                       v-if="craneState.cycleSessionId ? point.active : (i % Math.max(1, Math.ceil(craneTrendPoints.length / 10)) === 0 || i === craneTrendPoints.length - 1)"
@@ -672,16 +781,18 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
                       text-anchor="middle"
                       :class="point.active ? 'crane-x-active' : 'crane-x-dim'"
                     >
-                      {{ point.session.loadingEnd.slice(11, 16) }}
+                      {{ fmtClock(point.session.loadingEnd) }}
                     </text>
                   </g>
                   <text x="370" y="237" text-anchor="middle">Loading end time</text>
                 </svg>
               </div>
-              <div v-else class="dash-empty">No completed loading cycles for this date.</div>
+              <div v-else class="dash-empty">
+                {{ craneFilteredSessions.length ? 'No completed crane loading cycles for this date - truck visits only.' : 'No truck visits or crane cycles in this range.' }}
+              </div>
               <div v-if="craneCycleMatch" class="crane-drill">
                 <div class="dash-sec-head">
-                  <h3>Loading cycle {{ fmtDuration(diffSeconds(craneCycleMatch.loadingStart, craneCycleMatch.loadingEnd)) }} · {{ craneCycleMatch.loadingEnd.slice(11, 16) }}</h3>
+                  <h3>Loading cycle {{ fmtDuration(sessionCycle(craneCycleMatch)) }} · {{ fmtClock(craneCycleMatch.loadingEnd) }}</h3>
                   <span class="dash-sec-sub">click the dot again to clear</span>
                 </div>
                 <div class="crane-session">

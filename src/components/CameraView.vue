@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { redactUrl } from '../api'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { listOrganizations, redactUrl, type OrganizationRecord } from '../api'
 import {
   addCameraAIRecord,
   cameraRun,
@@ -11,6 +11,7 @@ import {
   removeCameraAIRecord,
   removeCameraRecord,
   store,
+  setActiveOrgId,
   updateCameraAIRecord,
 } from '../store'
 import type { Camera, CameraAI } from '../types'
@@ -20,6 +21,9 @@ import AddAiModal from './modals/AddAiModal.vue'
 
 // Camera status filter; tenant scope is controlled by the active Org ID.
 const cameraFilterStatus = ref('')
+const cameraFilterOrgId = ref(store.activeOrgId)
+const cameraOrganizations = ref<OrganizationRecord[]>([])
+const cameraOrganizationsLoading = ref(false)
 const cameraFilterLoading = ref(false)
 // null = 未筛选，展示完整列表；否则展示后端筛选结果
 const filteredCameras = ref<Camera[] | null>(null)
@@ -27,10 +31,41 @@ const filteredCameras = ref<Camera[] | null>(null)
 // 列表展示数据：筛选态用后端结果，否则用完整列表
 const displayedCameras = computed(() => filteredCameras.value ?? store.cameras)
 
+async function loadCameraOrganizations(): Promise<void> {
+  cameraOrganizationsLoading.value = true
+  try {
+    const organizations = (await listOrganizations()).filter((org) => org.status === 'active')
+    if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
+      organizations.unshift({
+        org_id: store.activeOrgId,
+        name: store.activeOrgId,
+        source: 'local',
+        status: 'active',
+      })
+    }
+    cameraOrganizations.value = organizations
+  } catch {
+    cameraOrganizations.value = [{
+      org_id: store.activeOrgId,
+      name: store.activeOrgId,
+      source: 'local',
+      status: 'active',
+    }]
+  } finally {
+    cameraOrganizationsLoading.value = false
+  }
+}
+
 async function applyCameraFilter(): Promise<void> {
   cameraFilterLoading.value = true
   try {
-    await loadCameras(true)
+    // Camera APIs are tenant-scoped by X-Organization-Id. Changing this
+    // selector therefore changes the active tenant before reloading rows.
+    if (cameraFilterOrgId.value !== store.activeOrgId) {
+      await setActiveOrgId(cameraFilterOrgId.value)
+    } else {
+      await loadCameras(true)
+    }
     filteredCameras.value = store.cameras.filter((camera) =>
       !cameraFilterStatus.value || camera.status === cameraFilterStatus.value,
     )
@@ -43,8 +78,17 @@ async function applyCameraFilter(): Promise<void> {
 
 function resetCameraFilter(): void {
   cameraFilterStatus.value = ''
+  cameraFilterOrgId.value = store.activeOrgId
   filteredCameras.value = null
 }
+
+watch(
+  () => store.activeOrgId,
+  (orgId) => {
+    cameraFilterOrgId.value = orgId
+    filteredCameras.value = null
+  },
+)
 
 // 相机展开：显示该相机下配置的 AI model 实例（参考 index 框架的展开结构）
 const cameraExpanded = ref<Record<string, boolean>>({})
@@ -187,7 +231,7 @@ let cameraRefreshTimer: number | null = null
 onMounted(async () => {
   // The AI model catalog and the camera instances are two views of one relation,
   // so both (and the per-camera run states) are loaded together.
-  await Promise.all([loadCameras(), loadScripts(), loadCameraAI()])
+  await Promise.all([loadCameras(), loadScripts(), loadCameraAI(), loadCameraOrganizations()])
   await loadAllCameraRuns()
 
   // 定时静默刷新：仅在停留在 Configuration → Camera 页时拉取，避免后台无谓请求。
@@ -226,7 +270,11 @@ onBeforeUnmount(() => {
         </div>
         <div class="field">
           <label>Active Org ID</label>
-          <input :value="store.activeOrgId" readonly />
+          <select v-model="cameraFilterOrgId" :disabled="cameraOrganizationsLoading || cameraFilterLoading">
+            <option v-for="org in cameraOrganizations" :key="org.org_id" :value="org.org_id">
+              {{ org.org_id }}{{ org.name && org.name !== org.org_id ? ` · ${org.name}` : '' }}
+            </option>
+          </select>
         </div>
         <div class="filter-actions">
           <button class="btn primary" :disabled="cameraFilterLoading" @click="applyCameraFilter">

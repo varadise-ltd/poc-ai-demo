@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { listScripts as apiListScripts, redactUrl } from '../api'
+import { listOrganizations, listScripts as apiListScripts, redactUrl, type OrganizationRecord } from '../api'
 import {
   addStreamCamera,
   availableStreamCameras,
@@ -14,6 +14,7 @@ import {
   removeStreamCamera,
   scriptHasRunningCamera,
   scriptOutput,
+  setActiveOrgId,
   store,
   toggleCameraRun,
   toggleRun,
@@ -30,6 +31,10 @@ const controlSelected = computed(() =>
 const controlExpanded = ref<Record<string, boolean>>({})
 // 每个 AI model 的「+ Add camera」下拉当前选中项
 const streamAddSelection = ref<Record<string, string>>({})
+// Run/Stop 请求进行中的相机（key = `${scriptId}::${camera}`）。点击后立即置位，
+// 按钮进入 pending（禁用 + 显示「…」），避免后端响应前的重复点击竞态与「点了没
+// 反应」的观感；请求完成/失败后复位。
+const cameraPending = ref<Record<string, boolean>>({})
 
 function toggleControlExpand(id: string): void {
   controlExpanded.value[id] = !controlExpanded.value[id]
@@ -48,8 +53,12 @@ function isRunning(id: string): boolean {
 // console line and the backend request log (same requestId) can be matched when
 // tracking which model/camera was started and when.
 async function onToggleCameraRun(scriptId: string, camera: string): Promise<void> {
+  const key = `${scriptId}::${camera}`
+  // 防重复点击：同一相机已有 Run/Stop 请求在飞时忽略后续点击。
+  if (cameraPending.value[key]) return
   const scriptName = store.scripts.find((s) => s.id === scriptId)?.name ?? scriptId
   const startedAt = performance.now()
+  cameraPending.value[key] = true
   console.log(`[ui] Run/Stop clicked: model="${scriptName}" (${scriptId}) camera="${camera}"`)
   try {
     await toggleCameraRun(scriptId, camera)
@@ -64,6 +73,8 @@ async function onToggleCameraRun(scriptId: string, camera: string): Promise<void
     )
     alert(err instanceof Error ? err.message : String(err))
     await loadScriptCameraRuns(scriptId)
+  } finally {
+    cameraPending.value[key] = false
   }
 }
 
@@ -160,6 +171,9 @@ async function onToggleRun(id: string): Promise<void> {
 // Script filters; tenant scope is controlled by the active Org ID.
 const scriptFilterStatus = ref('')
 const scriptFilterScenario = ref('')
+const scriptFilterOrgId = ref(store.activeOrgId)
+const scriptOrganizations = ref<OrganizationRecord[]>([])
+const scriptOrganizationsLoading = ref(false)
 const scriptFilterLoading = ref(false)
 // null = 未筛选，展示完整列表；否则展示后端筛选结果
 const filteredScripts = ref<Script[] | null>(null)
@@ -176,9 +190,37 @@ const scriptScenarioOptions = computed(() => {
 // 列表展示数据：筛选态用后端结果，否则用完整列表
 const displayedScripts = computed(() => filteredScripts.value ?? store.scripts)
 
+async function loadScriptOrganizations(): Promise<void> {
+  scriptOrganizationsLoading.value = true
+  try {
+    const organizations = (await listOrganizations()).filter((org) => org.status === 'active')
+    if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
+      organizations.unshift({
+        org_id: store.activeOrgId,
+        name: store.activeOrgId,
+        source: 'local',
+        status: 'active',
+      })
+    }
+    scriptOrganizations.value = organizations
+  } catch {
+    scriptOrganizations.value = [{
+      org_id: store.activeOrgId,
+      name: store.activeOrgId,
+      source: 'local',
+      status: 'active',
+    }]
+  } finally {
+    scriptOrganizationsLoading.value = false
+  }
+}
+
 async function applyScriptFilter(): Promise<void> {
   scriptFilterLoading.value = true
   try {
+    if (scriptFilterOrgId.value !== store.activeOrgId) {
+      await setActiveOrgId(scriptFilterOrgId.value)
+    }
     const { scripts } = await apiListScripts(
       scriptFilterStatus.value || undefined,
       undefined,
@@ -195,8 +237,17 @@ async function applyScriptFilter(): Promise<void> {
 function resetScriptFilter(): void {
   scriptFilterStatus.value = ''
   scriptFilterScenario.value = ''
+  scriptFilterOrgId.value = store.activeOrgId
   filteredScripts.value = null
 }
+
+watch(
+  () => store.activeOrgId,
+  (orgId) => {
+    scriptFilterOrgId.value = orgId
+    filteredScripts.value = null
+  },
+)
 
 function openScriptDetail(id: string): void {
   store.scriptDetailMode = 'edit'
@@ -262,7 +313,7 @@ function addScript(): void {
 }
 
 onMounted(async () => {
-  await loadScripts()
+  await Promise.all([loadScripts(), loadScriptOrganizations()])
   // Per-camera run state drives the Run/Stop buttons and their Online/Offline link.
   await loadAllCameraRuns()
   // Keeps the "Deleted (n)" badge honest before the restore panel is ever opened.
@@ -312,7 +363,11 @@ onBeforeUnmount(() => {
         </div>
         <div class="field">
           <label>Active Org ID</label>
-          <input :value="store.activeOrgId" readonly />
+          <select v-model="scriptFilterOrgId" :disabled="scriptOrganizationsLoading || scriptFilterLoading">
+            <option v-for="org in scriptOrganizations" :key="org.org_id" :value="org.org_id">
+              {{ org.org_id }}{{ org.name && org.name !== org.org_id ? ` · ${org.name}` : '' }}
+            </option>
+          </select>
         </div>
         <div class="field">
           <label>Scenario</label>
@@ -429,11 +484,11 @@ onBeforeUnmount(() => {
                   <button
                     class="btn btn-xs"
                     :class="cameraRun(s.id, cam).status === 'running' ? 'dark' : 'primary'"
-                    :disabled="cameraRun(s.id, cam).status !== 'running' && !cameraCanRun(s.id, cam)"
+                    :disabled="cameraPending[`${s.id}::${cam}`] || (cameraRun(s.id, cam).status !== 'running' && !cameraCanRun(s.id, cam))"
                     :title="cameraRunTitle(s.id, cam)"
                     @click="onToggleCameraRun(s.id, cam)"
                   >
-                    {{ cameraRun(s.id, cam).status === 'running' ? 'Stop' : 'Run' }}
+                    {{ cameraPending[`${s.id}::${cam}`] ? '…' : (cameraRun(s.id, cam).status === 'running' ? 'Stop' : 'Run') }}
                   </button>
                 </div>
                 <button class="icon-btn stream-del" title="Remove camera" @click="onRemoveStreamCamera(s.id, cam)">×</button>

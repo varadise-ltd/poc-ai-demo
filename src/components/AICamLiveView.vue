@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchTenantAsset, getCraneLive, getFaceLive, getGateLive, getPortLive, getRoi, snapshotUrl, streamUrl } from '../api'
-import type { CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PortLiveInfo, RoiPolygon } from '../api'
+import { fetchTenantAsset, getCraneJobs, getCraneLive, getFaceLive, getGateLive, getPortOverview, getRoi, snapshotUrl, streamUrl } from '../api'
+import type { CraneJob, CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PortOverview, RoiPolygon } from '../api'
 import type { Camera, EventItem, Script } from '../types'
 import { formatDisplayConfidence } from '../confidence'
 import {
@@ -30,6 +30,7 @@ const isRunning = computed(() =>
 // 与后端 AI model 是否 running 无关。后端 worker 只在 AI model 页手动 Stop
 // 才停止，否则一直保持 running。
 const previewing = ref(false)
+const streamEpoch = ref(0)
 
 // ---------------------------------------------------------------------------
 // The active Org ID is supplied by the API client as X-Organization-Id.
@@ -91,7 +92,13 @@ const currentStreamUrl = computed(() => {
   if (store.previewPaused) {
     return snapshotUrl(store.selectedCamera, store.selectedScriptId, store.previewShowLabels)
   }
-  return streamUrl(store.selectedCamera, store.selectedScriptId, store.previewShowLabels, false)
+  return streamUrl(
+    store.selectedCamera,
+    store.selectedScriptId,
+    store.previewShowLabels,
+    false,
+    streamEpoch.value,
+  )
 })
 
 const previewRois = ref<RoiPolygon[]>([])
@@ -127,6 +134,7 @@ const selectedCameraLabel = computed(() => {
 })
 
 let pollTimer: number | null = null
+let craneJobsTimer: number | null = null
 
 async function togglePreview(): Promise<void> {
   // 仅切换预览显示，绝不启动/停止后端 AI model。后端 model 的运行状态
@@ -134,8 +142,10 @@ async function togglePreview(): Promise<void> {
   if (!previewing.value && !isRunning.value) return
   previewing.value = !previewing.value
   if (previewing.value) {
+    streamEpoch.value += 1
     await loadPreviewRoi()
     await loadPreviewHistory()
+    void loadCraneJobs()
   }
 }
 
@@ -157,25 +167,48 @@ async function loadPreviewHistory(): Promise<void> {
  * 未 preview 时用低频间隔，只查 run 状态，不拉实时统计。
  */
 const LIVE_POLL_MS = 5000
+const CRANE_JOBS_POLL_MS = 2000
 const IDLE_POLL_MS = 15000
 
 async function pollTick(): Promise<void> {
   // 仅在 Live 页可见时轮询：切到其他 tab（v-show 常驻挂载）后台不发请求。
   if (store.activeTab !== 'demo') return
   await refreshSelectedScriptRun()
-  // 实时统计只在真正预览时才需要，未 preview 时不拉，避免无谓轮询。
-  if (!isRunning.value || !previewing.value) return
+  if (!isRunning.value) return
+  // 岸桥 crane 实时读数 + job 列表：只要相机 online + 模型 running 就持续刷新，
+  // 不依赖是否在 preview（quay crane cycle 面板需在未 preview 时也展示 list）。
+  if (isPortCrane.value) {
+    void loadCraneLive()
+    void loadCraneJobs()
+  }
+  // 跨相机港口总览同样在运行期间保持刷新（trucks + crane jobs 汇总）。
+  if (isPortScript.value) {
+    void loadPortOverview()
+  }
+  // 其余实时统计只在真正预览时才需要，未 preview 时不拉，避免无谓轮询。
+  if (!previewing.value) return
   void loadDetectionEvents()
   void loadGateLive()
   void loadFaceLive()
-  void loadPortLive()
-  void loadCraneLive()
   if (isCountingScript.value && !store.historyEvents.length) void loadPreviewHistory()
 }
 
 function restartPollTimer(): void {
   if (pollTimer) window.clearInterval(pollTimer)
   pollTimer = window.setInterval(() => void pollTick(), previewing.value ? LIVE_POLL_MS : IDLE_POLL_MS)
+  // 岸桥 job 列表独立高频刷新：只要相机 online + 模型 running 就刷新，
+  // 无论是否 preview（crane 面板在未 preview 时也要及时展示新 cycle）。
+  if (craneJobsTimer) window.clearInterval(craneJobsTimer)
+  craneJobsTimer = window.setInterval(() => {
+    if (
+      store.activeTab === 'demo' &&
+      isRunning.value &&
+      isPortCrane.value &&
+      selectedCameraOnline.value
+    ) {
+      void loadCraneJobs()
+    }
+  }, CRANE_JOBS_POLL_MS)
 }
 
 function startPolling(): void {
@@ -191,14 +224,20 @@ function stopPolling(): void {
     window.clearInterval(pollTimer)
     pollTimer = null
   }
+  if (craneJobsTimer) {
+    window.clearInterval(craneJobsTimer)
+    craneJobsTimer = null
+  }
   gateLive.value = null
   gateLiveError.value = ''
   faceLive.value = null
   faceLiveError.value = ''
-  portLive.value = null
-  portLiveError.value = ''
   craneLive.value = null
   craneLiveError.value = ''
+  craneJobs.value = []
+  craneJobsError.value = ''
+  portOverview.value = null
+  portOverviewError.value = ''
 }
 
 // ---------------------------------------------------------------------------
@@ -229,33 +268,24 @@ const isFaceScript = computed(() => selectedScript.value?.isFace === true)
 // ``port``（port_terminal）是计数脚本，IN/OUT 走 GatePipeline 计数面板；这里
 // 额外展示装卸區佔用時長 + 装卸代理（静止启发）。``port_crane`` 非计数脚本，
 // 这里展示 crane cycle 阶段（pick-up / landing / hatch / idle）。
-const portLive = ref<PortLiveInfo | null>(null)
-const portLiveError = ref('')
 const craneLive = ref<CraneLiveInfo | null>(null)
 const craneLiveError = ref('')
+// 岸桥作业循环列表：每次「抓取集装箱 → 放置集装箱」一个 job，展示两个时间点
+// （pick-up / landing）与对应时间差（每次装卸一个集装箱的耗时）。
+const craneJobs = ref<CraneJob[]>([])
+const craneJobsError = ref('')
 const isPortScript = computed(() => selectedScript.value?.isPort === true)
 // 港口两类模型按 detector_type 区分（ROI 为核心）：port_terminal = 集卡装卸區
 //（车辆进入/离开 ROI 计算停留时长，箭头仅示意）；port_crane = 岸橋吊具 cycle；
 // port_combined = 一个模型同时覆盖 truck + crane 两块读数。
-const isPortTruck = computed(() =>
-  ['port_terminal', 'port_combined'].includes(selectedScript.value?.detectorType ?? ''),
-)
 const isPortCrane = computed(() =>
   ['port_crane', 'port_combined'].includes(selectedScript.value?.detectorType ?? ''),
 )
-
-async function loadPortLive(): Promise<void> {
-  if (!isPortTruck.value || !isRunning.value || !store.selectedCamera) {
-    portLive.value = null
-    return
-  }
-  try {
-    portLive.value = await getPortLive(store.selectedCamera, store.selectedScriptId)
-    portLiveError.value = ''
-  } catch (err) {
-    portLiveError.value = err instanceof Error ? err.message : String(err)
-  }
-}
+// 当前选中摄像机是否在线（后端探测的输入流可达性）。岸桥 job 列表只要
+// 相机 online + 模型 running 就持续刷新，与是否 preview 无关。
+const selectedCameraOnline = computed(
+  () => store.cameraStatus[store.selectedCamera] === 'online',
+)
 
 async function loadCraneLive(): Promise<void> {
   if (!isPortCrane.value || !isRunning.value || !store.selectedCamera) {
@@ -268,6 +298,68 @@ async function loadCraneLive(): Promise<void> {
   } catch (err) {
     craneLiveError.value = err instanceof Error ? err.message : String(err)
   }
+}
+
+async function loadCraneJobs(): Promise<void> {
+  if (!isPortCrane.value || !isRunning.value) {
+    craneJobs.value = []
+    return
+  }
+  try {
+    craneJobs.value = await getCraneJobs(store.selectedScriptId, 20, store.selectedCamera)
+    craneJobsError.value = ''
+  } catch (err) {
+    craneJobsError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+function formatDurationSeconds(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  const s = Math.round(value)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  return `${m}m${String(s % 60).padStart(2, '0')}s`
+}
+
+function craneJobTypeLabel(jobType: string): string {
+  switch (jobType) {
+    case 'LOAD':
+      return 'loading (onto trailer)'
+    case 'DISCHARGE':
+      return 'unloading (off trailer)'
+    case 'HATCH':
+      return 'hatch cover'
+    default:
+      return jobType
+  }
+}
+
+// 跨相机港口总览：trucks（在 ROI 内 + 停留时长）+ crane jobs（抓取/放置 + 装货
+// 时长）+ 时间窗融合。view_role 让同一 port_combined 模型可分挂在多台车道/岸桥
+// 相机上，这里按 script_id 汇总所有相机的事实。
+const portOverview = ref<PortOverview | null>(null)
+const portOverviewError = ref('')
+
+async function loadPortOverview(): Promise<void> {
+  if (!isPortScript.value || !isRunning.value) {
+    portOverview.value = null
+    return
+  }
+  try {
+    portOverview.value = await getPortOverview(store.selectedScriptId)
+    portOverviewError.value = ''
+  } catch (err) {
+    portOverviewError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString('en-GB', { hour12: false })
+}
+
+function formatSeconds(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? '…' : `${value.toFixed(1)} s`
 }
 
 async function loadFaceLive(): Promise<void> {
@@ -358,15 +450,18 @@ async function loadGateLive(): Promise<void> {
 }
 
 watch([() => store.selectedCamera, () => store.selectedScriptId], () => {
+  streamEpoch.value += 1
   gateLive.value = null
   faceLive.value = null
-  portLive.value = null
   craneLive.value = null
+  craneJobs.value = []
+  portOverview.value = null
   if (isRunning.value) {
     void loadGateLive()
     void loadFaceLive()
-    void loadPortLive()
     void loadCraneLive()
+    void loadCraneJobs()
+    void loadPortOverview()
     void loadPreviewHistory()
   }
 })
@@ -381,13 +476,15 @@ watch(isRunning, (running) => {
   if (running) {
     void loadGateLive()
     void loadFaceLive()
-    void loadPortLive()
     void loadCraneLive()
+    void loadCraneJobs()
+    void loadPortOverview()
   } else {
     gateLive.value = null
     faceLive.value = null
-    portLive.value = null
     craneLive.value = null
+    craneJobs.value = []
+    portOverview.value = null
     // 模型已停止：预览随之关闭（停止中的 model 不可预览）。
     previewing.value = false
   }
@@ -683,44 +780,11 @@ onBeforeUnmount(() => {
           </p>
         </div>
 
-        <div v-if="isPortTruck" class="gate-live">
-          <div class="gate-live-head">
-            <strong>{{ selectedScript.name }} · loading bay</strong>
-            <span class="subtitle">
-              Truck bay occupancy + loading/unloading proxy (stationary heuristic, not pick-up/landing)
-            </span>
-            <span v-if="portLive?.mode === 'MOCK'" class="gate-live-badge">DEMO</span>
-          </div>
-          <p v-if="portLiveError" class="subtitle" style="color: var(--red)">{{ portLiveError }}</p>
-          <template v-if="portLive && portLive.running">
-            <div class="gate-live-stats">
-              <div class="gate-live-stat">
-                <span class="gate-live-label">Trucks in loading bay (now)</span>
-                <strong class="gate-live-value">{{ portLive.trucks_in_roi }}</strong>
-              </div>
-            </div>
-            <div v-if="portLive.trucks.length" class="gate-live-lines">
-              <div v-for="(t, i) in portLive.trucks" :key="t.track_id ?? i" class="gate-live-line">
-                <span class="gate-live-line-name">truck #{{ t.track_id }}</span>
-                <span class="gate-live-line-dir">
-                  <span class="in">{{ t.loading ? 'loading proxy' : 'in bay' }}</span>
-                  <span class="subtitle">{{ t.dwell ?? '…' }}</span>
-                </span>
-              </div>
-            </div>
-            <p v-else class="subtitle">No truck is currently inside the loading bay.</p>
-          </template>
-          <p v-else class="subtitle">
-            {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the
-            AI model page, then bay occupancy will appear here.
-          </p>
-        </div>
-
         <div v-if="isPortCrane" class="gate-live">
           <div class="gate-live-head">
             <strong>{{ selectedScript.name }} · quay crane cycle</strong>
             <span class="subtitle">
-              Open-vocabulary spreader / container / hatch + virtual PLC state machine
+              Top-down container motion: pick-up → landing, with per-container cycle time
             </span>
             <span v-if="craneLive?.mode === 'MOCK'" class="gate-live-badge">DEMO</span>
           </div>
@@ -732,22 +796,101 @@ onBeforeUnmount(() => {
                 <strong class="gate-live-value">{{ craneLive.state }}</strong>
               </div>
               <div class="gate-live-stat">
-                <span class="gate-live-label">Spreader</span>
-                <strong class="gate-live-value in">{{ craneLive.spreaders }}</strong>
+                <span class="gate-live-label">Containers today</span>
+                <strong class="gate-live-value">{{ craneLive.containers_today }}</strong>
               </div>
               <div class="gate-live-stat">
-                <span class="gate-live-label">Container</span>
-                <strong class="gate-live-value">{{ craneLive.containers }}</strong>
-              </div>
-              <div class="gate-live-stat">
-                <span class="gate-live-label">Hatch</span>
-                <strong class="gate-live-value out">{{ craneLive.hatches }}</strong>
+                <span class="gate-live-label">Containers completed (this run)</span>
+                <strong class="gate-live-value in">{{ craneLive.containers_completed }}</strong>
               </div>
             </div>
+
+            <p v-if="craneJobsError" class="subtitle" style="color: var(--red)">{{ craneJobsError }}</p>
+            <div class="gate-live-lines">
+              <div
+                v-for="job in craneJobs"
+                :key="job.id"
+                class="gate-live-line crane-job-row"
+              >
+                <span class="gate-live-line-name">
+                  <span class="crane-job-type">{{ craneJobTypeLabel(job.job_type) }}</span>
+                  <span class="subtitle">{{ job.container_id }} · {{ job.target_class }}</span>
+                </span>
+                <span class="gate-live-line-dir">
+                  <span class="subtitle">
+                    #{{ job.container_sequence }} · pick-up {{ formatTime(job.pick_up_at) }}
+                    · unloading/landing {{ formatTime(job.landing_at) }}
+                    · <strong class="in">{{ formatDurationSeconds(job.duration_seconds) }}</strong>
+                  </span>
+                </span>
+              </div>
+            </div>
+            <p v-if="!craneJobs.length" class="subtitle">
+              No container cycles recorded yet — a pick-up followed by a landing will appear here
+              with its measured time.
+            </p>
           </template>
           <p v-else class="subtitle">
             {{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the
             AI model page, then the crane cycle will appear here.
+          </p>
+        </div>
+
+        <div v-if="isPortScript" class="gate-live">
+          <div class="gate-live-head">
+            <strong>{{ selectedScript.name }} · cross-camera overview</strong>
+            <span class="subtitle">
+              Trucks in ROI + dwell time, with today and this-run totals across cameras
+            </span>
+          </div>
+          <p v-if="portOverviewError" class="subtitle" style="color: var(--red)">{{ portOverviewError }}</p>
+          <template v-if="portOverview">
+            <div class="gate-live-stats">
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Trucks in ROI (all cameras)</span>
+                <strong class="gate-live-value">{{ portOverview.trucks_in_roi }}</strong>
+              </div>
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Trucks today</span>
+                <strong class="gate-live-value in">{{ portOverview.trucks_today }}</strong>
+              </div>
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Trucks this run</span>
+                <strong class="gate-live-value">{{ portOverview.trucks_since_start }}</strong>
+              </div>
+            </div>
+            <div v-if="portOverview.trucks.length" class="gate-live-lines">
+              <div v-for="(t, i) in portOverview.trucks" :key="t.track_id ?? i" class="gate-live-line">
+                <span class="gate-live-line-name">
+                  truck #{{ t.track_id }} · {{ t.camera }}
+                  <span class="subtitle">{{ t.active ? 'in ROI (empty)' : 'loaded / exited' }}</span>
+                  <span class="subtitle">key {{ t.visit_key ? t.visit_key.slice(0, 8) : '…' }}</span>
+                  <span v-if="t.appearance?.enter" class="subtitle">app {{ t.appearance.enter.aspect_ratio }}:1 · {{ (t.appearance.enter.area_ratio ?? 0) * 100 | 0 }}%</span>
+                  <span v-if="t.appearance?.enter?.ocr_text_ids?.length" class="subtitle">OCR {{ t.appearance.enter.ocr_text_ids.join(', ') }}</span>
+                </span>
+                <span class="gate-live-line-dir">
+                  <span class="in">{{ t.loading ? 'loading proxy' : (t.active ? 'in ROI' : 'exited') }}</span>
+                  <span class="subtitle">
+                    in {{ t.entered_at ? formatTime(t.entered_at) : '…' }}
+                    · out {{ t.exited_at ? formatTime(t.exited_at) : '—' }}
+                    · dwell {{ formatSeconds(t.dwell_seconds) }}
+                  </span>
+                </span>
+              </div>
+            </div>
+            <p v-if="!portOverview.trucks.length" class="subtitle">
+              No truck visits recorded yet.
+            </p>
+          </template>
+          <!-- The placeholder must state the real reason: "not running" is only
+               one of them (a running model that is not being previewed loads
+               its overview on demand, so the panel can still be empty). -->
+          <p v-else-if="!isRunning" class="subtitle">
+            {{ selectedScript.name }} is not running — start it from the AI model page to see the
+            cross-camera truck + crane overview.
+          </p>
+          <p v-else class="subtitle">
+            Loading the cross-camera truck + crane overview for {{ selectedScript.name }}…
           </p>
         </div>
 

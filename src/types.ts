@@ -188,6 +188,8 @@ export interface CameraAI {
   enabled: boolean
   output?: string
   params?: Record<string, number | boolean>
+  /** Port multi-camera view role: '' (both/auto) | truck | crane. */
+  viewRole?: string
 }
 
 export interface DashboardDefinition {

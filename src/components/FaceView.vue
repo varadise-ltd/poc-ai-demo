@@ -1,9 +1,60 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
-import { loadFaces, store } from '../store'
+import { onMounted, ref, watch } from 'vue'
+import { listOrganizations, type OrganizationRecord } from '../api'
+import { loadFaces, setActiveOrgId, store } from '../store'
 import FaceEditorModal from './modals/FaceEditorModal.vue'
 import FaceDetailModal from './modals/FaceDetailModal.vue'
 import DeleteFaceModal from './modals/DeleteFaceModal.vue'
+
+const faceFilterOrgId = ref(store.activeOrgId)
+const faceOrganizations = ref<OrganizationRecord[]>([])
+const faceOrganizationsLoading = ref(false)
+const faceFilterLoading = ref(false)
+
+async function loadFaceOrganizations(): Promise<void> {
+  faceOrganizationsLoading.value = true
+  try {
+    const organizations = (await listOrganizations()).filter((org) => org.status === 'active')
+    if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
+      organizations.unshift({
+        org_id: store.activeOrgId,
+        name: store.activeOrgId,
+        source: 'local',
+        status: 'active',
+      })
+    }
+    faceOrganizations.value = organizations
+  } catch {
+    faceOrganizations.value = [{
+      org_id: store.activeOrgId,
+      name: store.activeOrgId,
+      source: 'local',
+      status: 'active',
+    }]
+  } finally {
+    faceOrganizationsLoading.value = false
+  }
+}
+
+async function applyFaceFilter(): Promise<void> {
+  faceFilterLoading.value = true
+  try {
+    if (faceFilterOrgId.value !== store.activeOrgId) {
+      await setActiveOrgId(faceFilterOrgId.value)
+    } else {
+      await loadFaces(true)
+    }
+  } catch (err) {
+    alert(err instanceof Error ? err.message : String(err))
+  } finally {
+    faceFilterLoading.value = false
+  }
+}
+
+function resetFaceFilter(): void {
+  faceFilterOrgId.value = store.activeOrgId
+  void loadFaces(true)
+}
 
 function addFace(): void {
   store.editingFaceId = null
@@ -21,7 +72,7 @@ function openDeleteFace(id: number): void {
 }
 
 onMounted(async () => {
-  await loadFaces()
+  await Promise.all([loadFaces(), loadFaceOrganizations()])
 })
 
 // 點擊「Configuration → Face management」時即時刷新（quiet，不閃 loading）：
@@ -32,6 +83,13 @@ watch(
   () => [store.activeTab, store.configTab] as const,
   ([tab, configTab]) => {
     if (tab === 'config' && configTab === 'face') loadFaces(true)
+  },
+)
+
+watch(
+  () => store.activeOrgId,
+  (orgId) => {
+    faceFilterOrgId.value = orgId
   },
 )
 </script>
@@ -52,6 +110,22 @@ watch(
           <strong>{{ store.faceMeta?.active_dim ?? '—' }}-d</strong>
         </p>
         <button class="btn primary" @click="addFace">+ Add face data</button>
+      </div>
+      <div class="filter-bar">
+        <div class="field">
+          <label>Active Org ID</label>
+          <select v-model="faceFilterOrgId" :disabled="faceOrganizationsLoading || faceFilterLoading">
+            <option v-for="org in faceOrganizations" :key="org.org_id" :value="org.org_id">
+              {{ org.org_id }}{{ org.name && org.name !== org.org_id ? ` · ${org.name}` : '' }}
+            </option>
+          </select>
+        </div>
+        <div class="filter-actions">
+          <button class="btn primary" :disabled="faceFilterLoading" @click="applyFaceFilter">
+            {{ faceFilterLoading ? 'Filtering…' : 'Filter' }}
+          </button>
+          <button class="btn" @click="resetFaceFilter">Reset</button>
+        </div>
       </div>
       <div v-if="store.faceNotice" class="notice face-notice">
         <div>

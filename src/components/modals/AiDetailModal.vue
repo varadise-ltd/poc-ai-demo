@@ -28,15 +28,21 @@ const activeTab = ref<'common' | 'roi'>('common')
 const detailName = ref('')
 const detailEnabled = ref(true)
 const detailOutput = ref('')
+const detailViewRole = ref('')
 const detailParams = ref<Record<string, number | boolean>>({})
 const saving = ref(false)
 const saveError = ref('')
+
+const isPortModel = computed(() =>
+  ['port_terminal', 'port_crane', 'port_combined'].includes(script.value?.detectorType ?? ''),
+)
 
 function syncCommonFromInstance(): void {
   const inst = instance.value
   detailName.value = inst?.name ?? script.value?.name ?? ''
   detailEnabled.value = inst?.enabled !== false
   detailOutput.value = inst?.output ?? ''
+  detailViewRole.value = inst?.viewRole ?? ''
   const defaults: Record<string, number | boolean> = {}
   for (const p of script.value?.params ?? []) defaults[p.key] = p.value
   detailParams.value = { ...defaults, ...(inst?.params ?? {}) }
@@ -52,6 +58,7 @@ async function saveCommon(): Promise<void> {
       enabled: detailEnabled.value,
       output: detailOutput.value,
       params: detailParams.value,
+      viewRole: detailViewRole.value,
     })
     close()
   } catch (err) {
@@ -95,9 +102,32 @@ const roiLoading = ref(false)
 const roiSaving = ref(false)
 const roiFrameKey = ref(0)
 const roiImage = ref<HTMLImageElement | null>(null)
+const roiStage = ref<HTMLDivElement | null>(null)
 const roiNaturalW = ref(1280)
 const roiNaturalH = ref(720)
 const roiDrawing = ref(false)
+
+// 在画面四周额外留出 ROI_PAD_RATIO 的「扩展画布」，便于在帧边缘之外补点、
+// 绘制覆盖到边界的 ROI（帧坐标允许为负或超出 W/H）。
+const ROI_PAD_RATIO = 0.1
+const roiPadX = computed(() => roiNaturalW.value * ROI_PAD_RATIO)
+const roiPadY = computed(() => roiNaturalH.value * ROI_PAD_RATIO)
+const roiCanvasW = computed(() => roiNaturalW.value * (1 + 2 * ROI_PAD_RATIO))
+const roiCanvasH = computed(() => roiNaturalH.value * (1 + 2 * ROI_PAD_RATIO))
+// 帧在扩展画布内的位置/尺寸（百分比，相对 stage）。
+const roiFrameStyle = computed(() => {
+  const inner = 1 / (1 + 2 * ROI_PAD_RATIO)
+  const offset = ROI_PAD_RATIO / (1 + 2 * ROI_PAD_RATIO)
+  return {
+    left: `${(offset * 100).toFixed(2)}%`,
+    top: `${(offset * 100).toFixed(2)}%`,
+    width: `${(inner * 100).toFixed(2)}%`,
+    height: `${(inner * 100).toFixed(2)}%`,
+  }
+})
+const roiSvgViewBox = computed(
+  () => `-${roiPadX.value} -${roiPadY.value} ${roiCanvasW.value} ${roiCanvasH.value}`,
+)
 
 const roiFrameUrl = computed(() => {
   if (!cameraName.value || !roiFrameKey.value) return ''
@@ -192,18 +222,21 @@ function onFrameLoad(e: Event): void {
 }
 
 function pointFromEvent(e: MouseEvent): [number, number] | null {
-  const img = roiImage.value
-  if (!img || !roiNaturalW.value || !roiNaturalH.value) return null
-  const rect = img.getBoundingClientRect()
-  if (!img.complete || !img.naturalWidth || rect.width <= 0 || rect.height <= 0) {
+  const stage = roiStage.value
+  if (!stage || !roiNaturalW.value || !roiNaturalH.value) return null
+  const rect = stage.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) {
     roiStatus.value = 'Frame is not ready — load a camera frame before drawing.'
     return null
   }
-  const x = Math.round(((e.clientX - rect.left) / rect.width) * roiNaturalW.value)
-  const y = Math.round(((e.clientY - rect.top) / rect.height) * roiNaturalH.value)
-  const cx = Math.min(roiNaturalW.value, Math.max(0, x))
-  const cy = Math.min(roiNaturalH.value, Math.max(0, y))
-  return [cx, cy]
+  // 鼠标落在「扩展画布」上：先换算到画布坐标，再平移到帧坐标（帧原点在画布内
+  // 偏移 roiPadX/roiPadY）。帧坐标允许为负或超出 W/H（落在边缘留白区），
+  // 便于在画面边缘之外补点，绘制覆盖到边界的 ROI。
+  const canvasX = ((e.clientX - rect.left) / rect.width) * roiCanvasW.value
+  const canvasY = ((e.clientY - rect.top) / rect.height) * roiCanvasH.value
+  const x = Math.round(Math.min(roiCanvasW.value, Math.max(0, canvasX)) - roiPadX.value)
+  const y = Math.round(Math.min(roiCanvasH.value, Math.max(0, canvasY)) - roiPadY.value)
+  return [x, y]
 }
 
 function addPoint(e: MouseEvent): void {
@@ -823,6 +856,18 @@ onBeforeUnmount(() => {
                   <option :value="false">Disabled</option>
                 </select>
               </div>
+              <div v-if="isPortModel" class="field full">
+                <label>Camera view role</label>
+                <select v-model="detailViewRole">
+                  <option value="">Auto (both truck &amp; crane)</option>
+                  <option value="truck">Truck view (lane ROI / dwell)</option>
+                  <option value="crane">Crane view (spreader / container)</option>
+                </select>
+                <span class="subtitle">
+                  Pin this camera to truck or crane detection; multiple cameras can
+                  cover both views and are fused by time on the live panel.
+                </span>
+              </div>
             </div>
           </div>
           <div class="config-section">
@@ -964,18 +1009,20 @@ onBeforeUnmount(() => {
               @mousedown="onCanvasMouseDown"
             >
               <div
+                ref="roiStage"
                 class="roi-frame-stage"
                 :style="{ aspectRatio: `${roiNaturalW} / ${roiNaturalH}` }"
               >
                 <img
                   ref="roiImage"
                   :src="roiFrameUrl"
+                  :style="roiFrameStyle"
                   class="roi-frame"
                   alt="ROI frame"
                   draggable="false"
                   @load="onFrameLoad"
                 />
-                <svg class="roi-overlay" :viewBox="`0 0 ${roiNaturalW} ${roiNaturalH}`">
+                <svg class="roi-overlay" :viewBox="roiSvgViewBox">
                 <defs>
                   <marker id="gate-arrow-head" viewBox="0 0 10 10" refX="8" refY="5"
                           markerWidth="7" markerHeight="7" orient="auto-start-reverse">

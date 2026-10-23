@@ -14,6 +14,7 @@ export type ConfigTabId = 'camera' | 'model' | 'face'
 export const store = reactive({
   // Active tenant. The API client sends this as X-Organization-Id on every request.
   activeOrgId: api.getActiveOrgId(),
+  projectId: api.getActiveProjectId(),
   // Navigation
   activeTab: 'demo' as TabId,
   // Configuration 子页：Camera / AI model / Face management。
@@ -747,6 +748,7 @@ export async function addCameraAIRecord(fields: {
   enabled?: boolean
   output?: string
   params?: Record<string, number | boolean>
+  viewRole?: string
 }): Promise<CameraAI> {
   const inst = await api.createCameraAI(fields)
   store.cameraAI.push(inst)
@@ -756,7 +758,7 @@ export async function addCameraAIRecord(fields: {
 
 export async function updateCameraAIRecord(
   iid: number,
-  fields: { name?: string; enabled?: boolean; output?: string; params?: Record<string, number | boolean> },
+  fields: { name?: string; enabled?: boolean; output?: string; params?: Record<string, number | boolean>; viewRole?: string },
 ): Promise<void> {
   const inst = await api.updateCameraAI(iid, fields)
   const idx = store.cameraAI.findIndex((a) => a.iid === iid)

@@ -24,12 +24,18 @@ function resolveBaseUrl(): string {
 const BASE_URL: string = resolveBaseUrl()
 
 const ORG_STORAGE_KEY = 'cosmos.activeOrgId'
+const PROJECT_STORAGE_KEY = 'cosmos.activeProjectId'
 const DEFAULT_ORG_ID = import.meta.env.VITE_DEFAULT_ORG_ID || 'default'
+const DEFAULT_PROJECT_ID = import.meta.env.VITE_DEFAULT_PROJECT_ID || 'default'
 
 /** Active tenant used by all API calls. The backend remains the authority. */
 let activeOrgId = (() => {
   if (typeof window === 'undefined') return DEFAULT_ORG_ID
   return window.localStorage.getItem(ORG_STORAGE_KEY)?.trim() || DEFAULT_ORG_ID
+})()
+let activeProjectId = (() => {
+  if (typeof window === 'undefined') return DEFAULT_PROJECT_ID
+  return window.localStorage.getItem(PROJECT_STORAGE_KEY)?.trim() || DEFAULT_PROJECT_ID
 })()
 
 export function getActiveOrgId(): string {
@@ -41,9 +47,17 @@ export function setActiveOrgId(orgId: string): void {
   if (typeof window !== 'undefined') window.localStorage.setItem(ORG_STORAGE_KEY, activeOrgId)
 }
 
+export function getActiveProjectId(): string { return activeProjectId }
+
+export function setActiveProjectId(projectId: string): void {
+  activeProjectId = projectId.trim() || DEFAULT_PROJECT_ID
+  if (typeof window !== 'undefined') window.localStorage.setItem(PROJECT_STORAGE_KEY, activeProjectId)
+}
+
 function requestInit(init: RequestInit = {}): RequestInit {
   const headers = new Headers(init.headers)
   headers.set('X-Organization-Id', activeOrgId)
+  headers.set('X-Project-Id', activeProjectId)
   return { ...init, headers }
 }
 
@@ -118,6 +132,47 @@ export async function queryDashboard(
   if (filters.offset !== undefined) query.set('offset', String(filters.offset))
   const qs = query.toString()
   return handle<DashboardQueryResult>(await request(`${BASE_URL}/api/dashboard/${encodeURIComponent(dashboardId)}/query${qs ? `?${qs}` : ''}`))
+}
+
+export interface CraneDashboardSession {
+  id: string
+  truck_camera: string | null
+  crane_camera: string | null
+  entry: string | null
+  exit: string | null
+  loading_start: string | null
+  loading_end: string | null
+  dwell_seconds: number | null
+  cycle_seconds: number | null
+  job_type: string | null
+}
+
+export interface CraneDashboardResult {
+  stats: { label: string; value: number; tone?: string }[]
+  stats_meta?: { valid_dwell_count: number; dwell_min_seconds: number; dwell_max_seconds: number }
+  total: number
+  dwell_distribution?: { counts: number[]; maxBin: number }
+  trend?: CraneDashboardSession[]
+  cameras?: string[]
+  records: CraneDashboardSession[]
+  sessions: CraneDashboardSession[]
+}
+
+export async function queryCraneDashboard(filters: {
+  start?: string
+  end?: string
+  cameraId?: string
+  projectId?: string
+  dwellBin?: number | null
+} = {}): Promise<CraneDashboardResult> {
+  const query = new URLSearchParams()
+  if (filters.start) query.set('start', filters.start)
+  if (filters.end) query.set('end', filters.end)
+  if (filters.cameraId && filters.cameraId !== 'all') query.set('camera_id', filters.cameraId)
+  if (filters.projectId) query.set('project_id', filters.projectId)
+  if (filters.dwellBin != null) query.set('dwell_bin', String(filters.dwellBin))
+  const qs = query.toString()
+  return handle<CraneDashboardResult>(await request(`${BASE_URL}/api/dashboard/crane/query${qs ? `?${qs}` : ''}`))
 }
 
 interface FaceRecord {
@@ -991,36 +1046,6 @@ export async function getFaceLive(cameraId: string, scriptId?: string): Promise<
 // Port / quay-crane live readouts
 // ---------------------------------------------------------------------------
 
-/** One truck currently inside the loading bay. */
-export interface PortLiveTruck {
-  track_id: number | null
-  entered_at: string | null
-  dwell_seconds: number | null
-  dwell: string | null
-  loading: boolean
-  loading_started_at: string | null
-  activity_count: number
-  confidence: number | null
-}
-
-/** Live loading-bay readout for the port (truck) preview panel. */
-export interface PortLiveInfo {
-  camera_id: string
-  script_id: string | null
-  running: boolean
-  mode: string
-  trucks_in_roi: number
-  trucks: PortLiveTruck[]
-  updated_at: string | null
-}
-
-export async function getPortLive(cameraId: string, scriptId?: string): Promise<PortLiveInfo> {
-  const q = new URLSearchParams({ camera_id: cameraId })
-  if (scriptId) q.set('script_id', scriptId)
-  const res = await request(`${BASE_URL}/api/port/live?${q.toString()}`)
-  return handle<PortLiveInfo>(res)
-}
-
 /** Live quay-crane cycle readout (Axxon spreader view). */
 export interface CraneLiveInfo {
   camera_id: string
@@ -1032,6 +1057,8 @@ export interface CraneLiveInfo {
   containers: number
   hatches: number
   updated_at: string | null
+  containers_today: number
+  containers_completed: number
 }
 
 export async function getCraneLive(cameraId: string, scriptId?: string): Promise<CraneLiveInfo> {
@@ -1041,11 +1068,74 @@ export async function getCraneLive(cameraId: string, scriptId?: string): Promise
   return handle<CraneLiveInfo>(res)
 }
 
+/** One crane-cycle job: pick-up → landing with the measured container duration. */
+export interface CraneJob {
+  id: number
+  camera_id: string
+  script_id: string
+  run_id: string
+  job_type: string
+  target_class: string
+  pick_up_at: string
+  landing_at: string
+  duration_seconds: number | null
+  confidence: number
+  mode: string
+  container_id: string
+  container_sequence: number
+  containers_completed: number
+}
+
+export async function getCraneJobs(scriptId?: string, limit = 20, cameraId?: string): Promise<CraneJob[]> {
+  const q = new URLSearchParams()
+  if (scriptId) q.set('script_id', scriptId)
+  if (cameraId) q.set('camera_id', cameraId)
+  q.set('limit', String(limit))
+  const res = await request(`${BASE_URL}/api/port/crane/jobs?${q.toString()}`)
+  return handle<{ jobs: CraneJob[] }>(res).then((r) => r.jobs)
+}
+
+/** Cross-camera port overview: trucks in ROI + cumulative counters. */
+export interface PortOverview {
+  trucks_in_roi: number
+  trucks_today: number
+  trucks_since_start: number
+  trucks: {
+    track_id: number | null
+    visit_key: string | null
+    camera: string
+    entered_at: string | null
+    exited_at: string | null
+    dwell_seconds: number | null
+    dwell: string | null
+    active: boolean
+    loading: boolean
+    appearance: {
+      enter: { aspect_ratio: number | null; area_ratio: number | null; histogram_dim: number; ocr_text_ids?: string[] } | null
+      exit: { aspect_ratio: number | null; area_ratio: number | null; histogram_dim: number; ocr_text_ids?: string[] } | null
+    } | null
+  }[]
+}
+
+export async function getPortOverview(scriptId?: string, limit = 50): Promise<PortOverview> {
+  const q = new URLSearchParams()
+  if (scriptId) q.set('script_id', scriptId)
+  q.set('limit', String(limit))
+  const res = await request(`${BASE_URL}/api/port/overview?${q.toString()}`)
+  return handle<PortOverview>(res)
+}
+
 // ---------------------------------------------------------------------------
 // Stream URLs (MJPEG preview + snapshot)
 // ---------------------------------------------------------------------------
 
-export function streamUrl(camera: string, scriptId: string, annotate: boolean, roiOverlay = true): string {
+export function streamUrl(
+  camera: string,
+  scriptId: string,
+  annotate: boolean,
+  roiOverlay = true,
+  cacheBust?: string | number,
+): string {
   const q = new URLSearchParams({
     camera,
     script_id: scriptId,
@@ -1053,6 +1143,7 @@ export function streamUrl(camera: string, scriptId: string, annotate: boolean, r
     roi_overlay: String(roiOverlay),
     org_id: activeOrgId,
   })
+  if (cacheBust !== undefined) q.set('stream_nonce', String(cacheBust))
   return `${BASE_URL}/api/stream?${q.toString()}`
 }
 
@@ -1117,10 +1208,11 @@ interface CameraAIRecord {
   enabled: boolean
   output?: string
   params?: Record<string, number | boolean>
+  view_role?: string
 }
 
 function toCameraAI(r: CameraAIRecord): CameraAI {
-  return { iid: r.iid, camera: r.camera, scriptId: r.script_id, name: r.name, enabled: r.enabled, output: r.output, params: r.params }
+  return { iid: r.iid, camera: r.camera, scriptId: r.script_id, name: r.name, enabled: r.enabled, output: r.output, params: r.params, viewRole: r.view_role ?? '' }
 }
 
 export async function listCameraAI(): Promise<CameraAI[]> {
@@ -1136,23 +1228,24 @@ export async function createCameraAI(fields: {
   enabled?: boolean
   output?: string
   params?: Record<string, number | boolean>
+  viewRole?: string
 }): Promise<CameraAI> {
   const res = await request(`${BASE_URL}/api/camera-ai`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ camera: fields.camera, script_id: fields.scriptId, name: fields.name, enabled: fields.enabled, output: fields.output, params: fields.params }),
+    body: JSON.stringify({ camera: fields.camera, script_id: fields.scriptId, name: fields.name, enabled: fields.enabled, output: fields.output, params: fields.params, view_role: fields.viewRole }),
   })
   return toCameraAI(await handle<CameraAIRecord>(res))
 }
 
 export async function updateCameraAI(
   iid: number,
-  fields: { name?: string; enabled?: boolean; output?: string; params?: Record<string, number | boolean> },
+  fields: { name?: string; enabled?: boolean; output?: string; params?: Record<string, number | boolean>; viewRole?: string },
 ): Promise<CameraAI> {
   const res = await request(`${BASE_URL}/api/camera-ai/${iid}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(fields),
+    body: JSON.stringify({ name: fields.name, enabled: fields.enabled, output: fields.output, params: fields.params, view_role: fields.viewRole }),
   })
   return toCameraAI(await handle<CameraAIRecord>(res))
 }
