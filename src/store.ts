@@ -358,6 +358,10 @@ export async function toggleScriptCameras(scriptId: string): Promise<void> {
       await toggleCameraRun(scriptId, camera)
     }
   }
+  // Keep the aggregate model state and each per-camera row synchronized. This
+  // is especially important for port_combined, where truck and quay-crane
+  // workers must run concurrently on two different cameras.
+  await loadScriptCameraRuns(scriptId)
 }
 
 /** Mirror the aggregate camera state into the script-level run state. */

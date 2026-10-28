@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchTenantAsset, getCraneJobs, getCraneLive, getFaceLive, getGateLive, getPortOverview, getRoi, snapshotUrl, streamUrl } from '../api'
+import { fetchTenantAsset, getCraneJobs, getCraneLive, getFaceLive, getGateLive, getPortOverview, getRoi, isNormalizedRoiPoints, snapshotUrl, streamUrl } from '../api'
 import type { CraneJob, CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PortOverview, RoiPolygon } from '../api'
 import type { Camera, EventItem, Script } from '../types'
 import { formatDisplayConfidence } from '../confidence'
@@ -10,8 +10,10 @@ import {
   loadCameras,
   loadHistoryEvents,
   loadDetectionEvents,
+  loadScriptCameraRuns,
   loadScripts,
   refreshSelectedScriptRun,
+  scriptHasRunningCamera,
   selectedScript,
   selectedScriptRun,
   store,
@@ -25,12 +27,19 @@ const isRunning = computed(() =>
   availableScripts.value.some((script) => script.id === store.selectedScriptId) &&
   selectedScriptRun.value.status === 'running',
 )
+// Port panels are cross-camera. The selected preview camera may be the truck
+// worker while the crane worker runs on the other assigned camera.
+const isPortMonitoringRunning = computed(() =>
+  !!store.selectedScriptId && scriptHasRunningCamera(store.selectedScriptId),
+)
 
 // 预览显示开关（纯前端）：Preview / Stop Preview 只控制是否显示预览画面，
 // 与后端 AI model 是否 running 无关。后端 worker 只在 AI model 页手动 Stop
 // 才停止，否则一直保持 running。
 const previewing = ref(false)
 const streamEpoch = ref(0)
+const streamHasFrame = ref(false)
+const streamConnectionError = ref(false)
 
 // ---------------------------------------------------------------------------
 // The active Org ID is supplied by the API client as X-Organization-Id.
@@ -105,6 +114,17 @@ const previewRois = ref<RoiPolygon[]>([])
 const previewFrameWidth = ref(1280)
 const previewFrameHeight = ref(720)
 
+// ROI 以归一化坐标存储：渲染时按当前帧尺寸换算成像素（历史像素数据原样），
+// 这样预览画面无论分辨率如何，虚线 ROI 都与实际帧边界对齐、不再漂移。
+const previewRoisPixel = computed<RoiPolygon[]>(() =>
+  previewRois.value.map((roi) => ({
+    id: roi.id,
+    points: isNormalizedRoiPoints(roi.points)
+      ? roi.points.map(([x, y]) => [x * previewFrameWidth.value, y * previewFrameHeight.value] as [number, number])
+      : roi.points,
+  })),
+)
+
 async function loadPreviewRoi(): Promise<void> {
   if (!store.selectedScriptId || !store.selectedCamera) {
     previewRois.value = []
@@ -120,10 +140,27 @@ async function loadPreviewRoi(): Promise<void> {
 
 function onPreviewFrameLoad(event: Event): void {
   const image = event.target as HTMLImageElement
+  streamHasFrame.value = true
+  streamConnectionError.value = false
   if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-    previewFrameWidth.value = image.naturalWidth
-    previewFrameHeight.value = image.naturalHeight
+    // 只有真实分辨率变化（例如断流重连到不同分辨率的源）才更新，避免每帧都
+    // 改写尺寸从而触发 previewRoisPixel 重算。
+    if (
+      image.naturalWidth !== previewFrameWidth.value ||
+      image.naturalHeight !== previewFrameHeight.value
+    ) {
+      previewFrameWidth.value = image.naturalWidth
+      previewFrameHeight.value = image.naturalHeight
+    }
   }
+}
+
+function onPreviewFrameError(): void {
+  // Do not replace the image source here. Replacing it while the browser is
+  // reconnecting creates a reload loop and presents the whole video card as a
+  // black frame. The browser keeps the MJPEG connection state and the card
+  // background remains visible until the next valid frame arrives.
+  streamConnectionError.value = true
 }
 
 // 画面左下角显示当前预览的真实摄像机与分辨率（原先是写死的装饰文字）
@@ -135,6 +172,7 @@ const selectedCameraLabel = computed(() => {
 
 let pollTimer: number | null = null
 let craneJobsTimer: number | null = null
+let pollInFlight = false
 
 async function togglePreview(): Promise<void> {
   // 仅切换预览显示，绝不启动/停止后端 AI model。后端 model 的运行状态
@@ -143,6 +181,8 @@ async function togglePreview(): Promise<void> {
   previewing.value = !previewing.value
   if (previewing.value) {
     streamEpoch.value += 1
+    streamHasFrame.value = false
+    streamConnectionError.value = false
     await loadPreviewRoi()
     await loadPreviewHistory()
     void loadCraneJobs()
@@ -166,23 +206,43 @@ async function loadPreviewHistory(): Promise<void> {
  * 2. 仅在真正预览时才需要：实时统计（检测事件 / 计数 / 人脸）。
  * 未 preview 时用低频间隔，只查 run 状态，不拉实时统计。
  */
-const LIVE_POLL_MS = 5000
-const CRANE_JOBS_POLL_MS = 2000
+// Preview status and event panels should follow the worker quickly. The video
+// itself is an MJPEG stream; these intervals control the accompanying live
+// statistics, not the camera frame rate.
+const LIVE_POLL_MS = 1000
+const CRANE_JOBS_POLL_MS = 1000
 const IDLE_POLL_MS = 15000
 
 async function pollTick(): Promise<void> {
   // 仅在 Live 页可见时轮询：切到其他 tab（v-show 常驻挂载）后台不发请求。
   if (store.activeTab !== 'demo') return
+  // Do not start a second refresh while the previous network request is still
+  // running. This keeps the shorter interval from creating request backlogs.
+  if (pollInFlight) return
+  pollInFlight = true
+  try {
+    await pollTickInternal()
+  } finally {
+    pollInFlight = false
+  }
+}
+
+async function pollTickInternal(): Promise<void> {
   await refreshSelectedScriptRun()
-  if (!isRunning.value) return
+  if (isPortScript.value) {
+    // Refresh every assigned camera because the selected preview camera is not
+    // necessarily the camera that owns the Crane worker.
+    await loadScriptCameraRuns(store.selectedScriptId)
+  }
+  if (!isRunning.value && !isPortMonitoringRunning.value) return
   // 岸桥 crane 实时读数 + job 列表：只要相机 online + 模型 running 就持续刷新，
   // 不依赖是否在 preview（quay crane cycle 面板需在未 preview 时也展示 list）。
-  if (isPortCrane.value) {
+  if (isPortCrane.value && isPortMonitoringRunning.value) {
     void loadCraneLive()
     void loadCraneJobs()
   }
   // 跨相机港口总览同样在运行期间保持刷新（trucks + crane jobs 汇总）。
-  if (isPortScript.value) {
+  if (isPortScript.value && isPortMonitoringRunning.value) {
     void loadPortOverview()
   }
   // 其余实时统计只在真正预览时才需要，未 preview 时不拉，避免无谓轮询。
@@ -196,15 +256,15 @@ async function pollTick(): Promise<void> {
 function restartPollTimer(): void {
   if (pollTimer) window.clearInterval(pollTimer)
   pollTimer = window.setInterval(() => void pollTick(), previewing.value ? LIVE_POLL_MS : IDLE_POLL_MS)
-  // 岸桥 job 列表独立高频刷新：只要相机 online + 模型 running 就刷新，
-  // 无论是否 preview（crane 面板在未 preview 时也要及时展示新 cycle）。
+  // 岸桥 job 列表独立高频刷新：只要 Crane 来源相机 online + 任一 Port
+  // worker running 就刷新，无论当前 preview 选择哪台相机。
   if (craneJobsTimer) window.clearInterval(craneJobsTimer)
   craneJobsTimer = window.setInterval(() => {
     if (
       store.activeTab === 'demo' &&
-      isRunning.value &&
+      isPortMonitoringRunning.value &&
       isPortCrane.value &&
-      selectedCameraOnline.value
+      craneSourceOnline.value
     ) {
       void loadCraneJobs()
     }
@@ -278,22 +338,45 @@ const isPortScript = computed(() => selectedScript.value?.isPort === true)
 // 港口两类模型按 detector_type 区分（ROI 为核心）：port_terminal = 集卡装卸區
 //（车辆进入/离开 ROI 计算停留时长，箭头仅示意）；port_crane = 岸橋吊具 cycle；
 // port_combined = 一个模型同时覆盖 truck + crane 两块读数。
+// Combined port monitoring is intentionally cross-camera: choosing the lane
+// preview must still show the quay-crane panel, and choosing the quay preview
+// must still show the truck overview. ``viewRole`` selects the worker's input,
+// not which monitoring panels the operator may see.
 const isPortCrane = computed(() =>
   ['port_crane', 'port_combined'].includes(selectedScript.value?.detectorType ?? ''),
 )
-// 当前选中摄像机是否在线（后端探测的输入流可达性）。岸桥 job 列表只要
-// 相机 online + 模型 running 就持续刷新，与是否 preview 无关。
-const selectedCameraOnline = computed(
-  () => store.cameraStatus[store.selectedCamera] === 'online',
+// A combined model normally has one ``viewRole=crane`` assignment and one
+// ``viewRole=truck`` assignment.  Always query Crane facts using the dedicated
+// crane camera, even while the user is previewing the truck camera.  For a
+// standalone Crane model or a legacy combined assignment without roles, fall
+// back to the selected camera.
+const craneSourceCamera = computed(() => {
+  const scriptId = store.selectedScriptId
+  if (!scriptId || !isPortCrane.value) return ''
+  const instances = store.cameraAI.filter(
+    (item) => item.scriptId === scriptId && item.enabled,
+  )
+  const craneInstance = instances.find(
+    (item) => (item.viewRole ?? '').trim().toLowerCase() === 'crane',
+  )
+  if (craneInstance) return craneInstance.camera
+  const selectedInstance = instances.find((item) => item.camera === store.selectedCamera)
+  if ((selectedInstance?.viewRole ?? '').trim().toLowerCase() !== 'truck') {
+    return store.selectedCamera
+  }
+  return instances.find((item) => (item.viewRole ?? '').trim().toLowerCase() !== 'truck')?.camera ?? ''
+})
+const craneSourceOnline = computed(
+  () => store.cameraStatus[craneSourceCamera.value] === 'online',
 )
 
 async function loadCraneLive(): Promise<void> {
-  if (!isPortCrane.value || !isRunning.value || !store.selectedCamera) {
+  if (!isPortCrane.value || !craneSourceCamera.value) {
     craneLive.value = null
     return
   }
   try {
-    craneLive.value = await getCraneLive(store.selectedCamera, store.selectedScriptId)
+    craneLive.value = await getCraneLive(craneSourceCamera.value, store.selectedScriptId)
     craneLiveError.value = ''
   } catch (err) {
     craneLiveError.value = err instanceof Error ? err.message : String(err)
@@ -301,12 +384,12 @@ async function loadCraneLive(): Promise<void> {
 }
 
 async function loadCraneJobs(): Promise<void> {
-  if (!isPortCrane.value || !isRunning.value) {
+  if (!isPortCrane.value || !craneSourceCamera.value) {
     craneJobs.value = []
     return
   }
   try {
-    craneJobs.value = await getCraneJobs(store.selectedScriptId, 20, store.selectedCamera)
+    craneJobs.value = await getCraneJobs(store.selectedScriptId, 20, craneSourceCamera.value)
     craneJobsError.value = ''
   } catch (err) {
     craneJobsError.value = err instanceof Error ? err.message : String(err)
@@ -341,7 +424,7 @@ const portOverview = ref<PortOverview | null>(null)
 const portOverviewError = ref('')
 
 async function loadPortOverview(): Promise<void> {
-  if (!isPortScript.value || !isRunning.value) {
+  if (!isPortScript.value) {
     portOverview.value = null
     return
   }
@@ -456,7 +539,9 @@ watch([() => store.selectedCamera, () => store.selectedScriptId], () => {
   craneLive.value = null
   craneJobs.value = []
   portOverview.value = null
-  if (isRunning.value) {
+  streamHasFrame.value = false
+  streamConnectionError.value = false
+  if (isRunning.value || isPortMonitoringRunning.value) {
     void loadGateLive()
     void loadFaceLive()
     void loadCraneLive()
@@ -473,13 +558,13 @@ watch([() => store.selectedCamera, () => store.selectedScriptId], () => void loa
 // 运行状态与统计保持一致：worker 在别处（本页 Preview 或 AI model 页 Run）
 // 启动/停止后，本页自动跟随，无需刷新页面。轮询本身一直运行（见 pollTick）。
 watch(isRunning, (running) => {
-  if (running) {
+  if (running || isPortMonitoringRunning.value) {
     void loadGateLive()
     void loadFaceLive()
     void loadCraneLive()
     void loadCraneJobs()
     void loadPortOverview()
-  } else {
+  } else if (!isPortMonitoringRunning.value) {
     gateLive.value = null
     faceLive.value = null
     craneLive.value = null
@@ -618,8 +703,13 @@ onBeforeUnmount(() => {
               :src="currentStreamUrl"
               alt="Live detection stream"
               class="video-frame"
+              :class="{ 'video-frame-loading': !streamHasFrame }"
               @load="onPreviewFrameLoad"
+              @error="onPreviewFrameError"
             />
+            <div v-if="!streamHasFrame || streamConnectionError" class="video-stream-status" aria-live="polite">
+              {{ streamConnectionError ? 'Reconnecting to camera…' : 'Connecting to camera…' }}
+            </div>
             <svg
               v-if="previewRois.length"
               class="preview-roi-overlay"
@@ -628,13 +718,13 @@ onBeforeUnmount(() => {
               aria-label="Configured ROI boundary"
             >
               <polygon
-                v-for="(roi, index) in previewRois"
+                v-for="(roi, index) in previewRoisPixel"
                 :key="roi.id ?? index"
                 :points="roi.points.map(([x, y]) => `${x},${y}`).join(' ')"
                 class="preview-roi-polygon"
               />
               <text
-                v-for="(roi, index) in previewRois"
+                v-for="(roi, index) in previewRoisPixel"
                 :key="`label-${roi.id ?? index}`"
                 :x="roi.points[0]?.[0] ?? 0"
                 :y="Math.max(24, (roi.points[0]?.[1] ?? 24) - 8)"
@@ -838,7 +928,7 @@ onBeforeUnmount(() => {
 
         <div v-if="isPortScript" class="gate-live">
           <div class="gate-live-head">
-            <strong>{{ selectedScript.name }} · cross-camera overview</strong>
+            <strong>{{ selectedScript.name }} · Trunk cross-camera overview</strong>
             <span class="subtitle">
               Trucks in ROI + dwell time, with today and this-run totals across cameras
             </span>
@@ -863,13 +953,13 @@ onBeforeUnmount(() => {
               <div v-for="(t, i) in portOverview.trucks" :key="t.track_id ?? i" class="gate-live-line">
                 <span class="gate-live-line-name">
                   truck #{{ t.track_id }} · {{ t.camera }}
-                  <span class="subtitle">{{ t.active ? 'in ROI (empty)' : 'loaded / exited' }}</span>
+                  <span class="subtitle">{{ t.vehicle_state === 'loading' ? 'loading' : (t.loaded ? 'loaded / exited' : 'in ROI (empty)') }}</span>
                   <span class="subtitle">key {{ t.visit_key ? t.visit_key.slice(0, 8) : '…' }}</span>
                   <span v-if="t.appearance?.enter" class="subtitle">app {{ t.appearance.enter.aspect_ratio }}:1 · {{ (t.appearance.enter.area_ratio ?? 0) * 100 | 0 }}%</span>
                   <span v-if="t.appearance?.enter?.ocr_text_ids?.length" class="subtitle">OCR {{ t.appearance.enter.ocr_text_ids.join(', ') }}</span>
                 </span>
                 <span class="gate-live-line-dir">
-                  <span class="in">{{ t.loading ? 'loading proxy' : (t.active ? 'in ROI' : 'exited') }}</span>
+                    <span class="in">{{ t.vehicle_state === 'loading' ? 'loading proxy' : (t.loaded ? 'loaded / exited' : 'in ROI') }}</span>
                   <span class="subtitle">
                     in {{ t.entered_at ? formatTime(t.entered_at) : '…' }}
                     · out {{ t.exited_at ? formatTime(t.exited_at) : '—' }}

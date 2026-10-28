@@ -4,6 +4,7 @@ import {
   clearRoi as apiClearRoi,
   deleteGateConfig,
   getRoi,
+  isNormalizedRoiPoints,
   listGateConfigs,
   saveGateConfig,
   saveRoi as apiSaveRoi,
@@ -159,10 +160,16 @@ async function loadRoiForSelection(): Promise<void> {
   if (!store.aiDetailScriptId || !cameraName.value) return
   try {
     const roi = await getRoi(store.aiDetailScriptId, cameraName.value)
-    roiPolygons.value = (roi.rois ?? []).map((r) => ({
-      id: r.id ?? null,
-      points: r.points.map((p) => [Number(p[0]), Number(p[1])]),
-    }))
+    roiPolygons.value = (roi.rois ?? []).map((r) => {
+      const pts = r.points.map((p) => [Number(p[0]), Number(p[1])] as [number, number])
+      return {
+        id: r.id ?? null,
+        // 归一化坐标 → 像素（历史像素数据原样），内部统一用像素显示/拖拽。
+        points: isNormalizedRoiPoints(pts)
+          ? pts.map(([x, y]) => [x * roiNaturalW.value, y * roiNaturalH.value] as [number, number])
+          : pts,
+      }
+    })
     if (roiPolygons.value.length) {
       roiStatus.value = `Loaded ${roiPolygons.value.length} saved ROI polygon(s).`
     } else {
@@ -180,12 +187,8 @@ async function loadFrame(): Promise<void> {
   console.log(`[ROI] loadFrame script=${store.aiDetailScriptId} camera=${cameraName.value}`)
   try {
     roiFrameKey.value += 1
-    await loadRoiForSelection()
-    if (!roiPolygons.value.length) {
-      roiStatus.value = 'Frame loaded — click ✏️ Drawing ROI to draw, then Save ROI to persist.'
-    } else {
-      roiStatus.value = `Frame loaded — showing ${roiPolygons.value.length} saved ROI polygon(s). Click ✏️ Drawing ROI to add more.`
-    }
+    // ROI 与 count line 在帧加载完成（拿到真实 naturalW/H）后再加载，
+    // 以便把归一化坐标换算成像素显示（见 onFrameLoad）。
   } finally {
     roiLoading.value = false
   }
@@ -214,9 +217,10 @@ function onFrameLoad(e: Event): void {
   const img = e.target as HTMLImageElement
   roiNaturalW.value = img.naturalWidth
   roiNaturalH.value = img.naturalHeight
-  // Counting scripts: load saved count lines once the real frame size is known
-  // (normalized coords -> pixel coords conversion needs naturalW/H).
-  if (isCountingScript.value && !isRoiCountingScript.value && !gateLines.value.length) {
+  // ROI 与 count line 都在帧加载完成（拿到真实 naturalW/H）后再加载，
+  // 以便把归一化坐标换算成像素显示。
+  void loadRoiForSelection()
+  if (supportsGateLines.value && !gateLines.value.length) {
     void loadGateLines()
   }
 }
@@ -499,6 +503,21 @@ interface GateLineLocal {
 const isCountingScript = computed(() => script.value?.isCounting === true)
 // ROI 计数模型（Pedestrian / Vehicle in ROI）：画 ROI 而非线。
 const isRoiCountingScript = computed(() => script.value?.isRoiCounting === true)
+// Port Combined uses the same editable line control as the other line-based
+// models. For the truck view this line is a visual direction reference for the
+// EMPTY -> LOADING -> LOADED workflow; the polygon ROI remains the occupancy
+// boundary used by the truck state machine.
+const isPortTruckLineScript = computed(() =>
+  script.value?.detectorType === 'port_combined' &&
+  (instance.value?.viewRole ?? '').trim().toLowerCase() !== 'crane',
+)
+const supportsGateLines = computed(() =>
+  (isCountingScript.value && !isRoiCountingScript.value) || isPortTruckLineScript.value,
+)
+const lineKindLabel = computed(() => isPortTruckLineScript.value ? 'truck direction line' : 'count line')
+const lineInstruction = computed(() => isPortTruckLineScript.value
+  ? '普通方向线模式 — click two points to draw one line. The arrow points from the first point to the second point; drag endpoints to adjust or use ⇄ Flip to reverse it.'
+  : 'Count line mode ON — click two points on the frame to draw the line. The blue arrow marks the IN direction: moving ALONG the arrow (OUT → IN) counts as IN, against it counts as OUT. Use ⇄ Flip to reverse.')
 const gateLines = ref<GateLineLocal[]>([])
 const lineDrawing = ref(false)
 const lineStartPoint = ref<[number, number] | null>(null)
@@ -507,7 +526,7 @@ const gateLoading = ref(false)
 
 function toggleLineDrawing(): void {
   if (roiFrameKey.value === 0) {
-    roiStatus.value = 'Please click 📷 Load Frame first, then draw the count line.'
+    roiStatus.value = `Please click 📷 Load Frame first, then draw the ${lineKindLabel.value}.`
     return
   }
   lineDrawing.value = !lineDrawing.value
@@ -515,7 +534,7 @@ function toggleLineDrawing(): void {
   if (lineDrawing.value) {
     roiDrawing.value = false
     currentPoints.value = []
-    roiStatus.value = 'Count line mode ON — click two points on the frame to draw the line. The blue arrow marks the IN direction: moving ALONG the arrow (OUT → IN) counts as IN, against it counts as OUT. Use ⇄ Flip to reverse.'
+    roiStatus.value = lineInstruction.value
   } else {
     roiStatus.value = 'Count line mode OFF.'
   }
@@ -550,7 +569,7 @@ function onLineCanvasClick(e: MouseEvent): void {
     line,
   ]
   lineStartPoint.value = null
-  roiStatus.value = `Count line #${nextId} added — drag endpoints to adjust, ⇄ Flip to reverse IN/OUT, then 💾 Save Lines.`
+  roiStatus.value = `${lineKindLabel.value} #${nextId} added — drag endpoints to adjust, ⇄ Flip to reverse direction, then 💾 Save Lines.`
 }
 
 /** 箭头单位法向量（指向 IN 侧）；与后端 draw_overlay 相同的约定。 */
@@ -580,6 +599,10 @@ function arrowTip(line: GateLineLocal): [number, number] {
   return [mx + nx * len * 0.6, my + ny * len * 0.6]
 }
 
+function isOrdinaryDirectionLine(): boolean {
+  return isPortTruckLineScript.value
+}
+
 /** 箭头尾部：位于 OUT 侧，使箭头横穿计数线（OUT → IN 即通行方向）。 */
 function arrowTail(line: GateLineLocal): [number, number] {
   const { nx, ny, mx, my } = arrowVector(line)
@@ -589,9 +612,15 @@ function arrowTail(line: GateLineLocal): [number, number] {
 
 function flipGateLine(index: number): void {
   gateLines.value = gateLines.value.map((line, i) =>
-    i === index ? { ...line, arrowSign: (line.arrowSign === 1 ? -1 : 1) as 1 | -1 } : line,
+    i === index
+      ? (isPortTruckLineScript.value
+          ? { ...line, start: line.end, end: line.start }
+          : { ...line, arrowSign: (line.arrowSign === 1 ? -1 : 1) as 1 | -1 })
+      : line,
   )
-  roiStatus.value = `Line #${index + 1} direction flipped — the arrow now marks the new IN side. Save to apply.`
+  roiStatus.value = isPortTruckLineScript.value
+    ? `Line #${index + 1} direction flipped — the arrow now points from the second point to the first. Save to apply.`
+    : `Line #${index + 1} direction flipped — the arrow now marks the new IN side. Save to apply.`
 }
 
 async function removeGateLine(index: number): Promise<void> {
@@ -610,7 +639,7 @@ async function removeGateLine(index: number): Promise<void> {
 }
 
 async function loadGateLines(): Promise<void> {
-  if (!isCountingScript.value || !cameraName.value) return
+  if (!supportsGateLines.value || !cameraName.value) return
   gateLoading.value = true
   try {
     const gates = await listGateConfigs(cameraName.value, script.value?.id ?? '')
@@ -627,7 +656,7 @@ async function loadGateLines(): Promise<void> {
         saved: true,
       }))
     if (gateLines.value.length) {
-      roiStatus.value = (roiStatus.value ? `${roiStatus.value} ` : '') + `Loaded ${gateLines.value.length} saved count line(s).`
+      roiStatus.value = (roiStatus.value ? `${roiStatus.value} ` : '') + `Loaded ${gateLines.value.length} saved ${lineKindLabel.value}(s).`
     }
   } catch (err) {
     roiStatus.value = roiErrorMessage(err)
@@ -637,9 +666,9 @@ async function loadGateLines(): Promise<void> {
 }
 
 async function saveGateLines(): Promise<void> {
-  if (!isCountingScript.value || gateSaving.value) return
+  if (!supportsGateLines.value || gateSaving.value) return
   if (!gateLines.value.length) {
-    roiStatus.value = 'No count line to save — enable ✏️ Draw Line and click two points first.'
+    roiStatus.value = `No ${lineKindLabel.value} to save — enable ↔️ Draw Line and click two points first.`
     return
   }
   gateSaving.value = true
@@ -677,7 +706,7 @@ async function saveGateLines(): Promise<void> {
     gateLines.value = savedLines
     lineDrawing.value = false
     lineStartPoint.value = null
-    roiStatus.value = `Saved ${savedLines.length} count line(s) for ${cameraName.value} — running workers hot-reload the new lines & arrow directions.`
+    roiStatus.value = `Saved ${savedLines.length} ${lineKindLabel.value}(s) for ${cameraName.value} — running workers hot-reload the new lines & arrow directions.`
   } catch (err) {
     roiStatus.value = roiErrorMessage(err)
   } finally {
@@ -768,10 +797,28 @@ async function saveRoiLocal(): Promise<void> {
   }
   roiSaving.value = true
   try {
-    const polygons = roiPolygons.value.map((p) => p.points)
+    // 保存为归一化坐标（0..1），使 ROI 与源分辨率解耦、不再随分辨率漂移。
+    // 扩展画布允许在帧边缘外补点，这里把归一化坐标夹紧到 [0,1]，避免越界值
+    // （如 1.004）被后端 denormalize_roi / 前端 isNormalizedRoiPoints 的启发式
+    // 误判为历史像素坐标，导致 ROI 在预览与检测中塌缩。
+    const polygons = roiPolygons.value.map((p) =>
+      p.points.map(([x, y]) => [
+        Math.min(1, Math.max(0, x / roiNaturalW.value)),
+        Math.min(1, Math.max(0, y / roiNaturalH.value)),
+      ] as [number, number]),
+    )
     console.log(`[ROI] saveRoi script=${store.aiDetailScriptId} camera=${cameraName.value} polygons=${polygons.length}`)
     const saved = await apiSaveRoi(store.aiDetailScriptId, cameraName.value, polygons)
-    roiPolygons.value = saved.rois.map((r) => ({ id: r.id ?? null, points: r.points }))
+    // 后端返回的是归一化坐标；内部显示/拖拽用像素，需再换算回来。
+    roiPolygons.value = saved.rois.map((r) => {
+      const pts = r.points.map((p) => [Number(p[0]), Number(p[1])] as [number, number])
+      return {
+        id: r.id ?? null,
+        points: isNormalizedRoiPoints(pts)
+          ? pts.map(([x, y]) => [x * roiNaturalW.value, y * roiNaturalH.value] as [number, number])
+          : pts,
+      }
+    })
     roiDrawing.value = false
     currentPoints.value = []
     selectedPoint.value = null
@@ -963,20 +1010,20 @@ onBeforeUnmount(() => {
                 💾 Save ROI
               </button>
             </div>
-            <div v-if="isCountingScript && !isRoiCountingScript" class="roi-toolbar">
+            <div v-if="supportsGateLines" class="roi-toolbar">
               <button
                 class="btn"
                 :class="{ 'drawing-active': lineDrawing }"
                 :disabled="gateLoading"
-                title="Draw a count line with a blue IN-direction arrow (people counting)"
+                :title="isPortTruckLineScript ? 'Draw one ordinary blue direction line with an arrow' : 'Draw a count line with a blue IN-direction arrow (people counting)'"
                 @click="toggleLineDrawing"
               >
-                ↔️ Draw Count Line
+                ➡️ {{ isPortTruckLineScript ? 'Draw Direction Line' : 'Draw Count Line' }}
               </button>
               <button
                 class="btn primary"
                 :disabled="gateSaving || !gateLines.length"
-                title="Save count lines + arrow directions to backend and database"
+                :title="isPortTruckLineScript ? 'Save truck direction lines + arrows to backend and database' : 'Save count lines + arrow directions to backend and database'"
                 @click="saveGateLines"
               >
                 {{ gateSaving ? 'Saving…' : '💾 Save Lines' }}
@@ -988,7 +1035,10 @@ onBeforeUnmount(() => {
               </span>
             </div>
             <div class="roi-hint">
-              <template v-if="lineDrawing">
+              <template v-if="lineDrawing && isPortTruckLineScript">
+                ➡️ 普通方向线模式 — click two points to draw a <strong>blue line with one arrow</strong> · arrow direction is first point → second point · drag endpoints to adjust · ⇄ Flip reverses the direction · 💾 Save Lines persists it for this camera/model
+              </template>
+              <template v-else-if="lineDrawing">
                 ↔️ Count line mode — click two points to draw the line with a <strong>blue arrow</strong> marking IN/OUT (arrow only, no perpendicular line) · crossing ALONG the arrow = <strong>IN</strong>, against it = <strong>OUT</strong> · drag endpoints to adjust · ⇄ Flip reverses the direction · 💾 Save Lines persists to backend &amp; database (the counting algorithm uses the same arrow direction)
               </template>
               <template v-else-if="roiDrawing">
@@ -1031,14 +1081,24 @@ onBeforeUnmount(() => {
                 </defs>
                 <!-- Directional count lines. -->
                 <g v-for="(line, li) in gateLines" :key="'gate' + li">
-                  <line
-                    :x1="arrowTail(line)[0]" :y1="arrowTail(line)[1]"
-                    :x2="arrowTip(line)[0]" :y2="arrowTip(line)[1]"
-                    class="gate-arrow"
-                    marker-end="url(#gate-arrow-head)"
-                  />
-                  <text :x="arrowTip(line)[0] + 8" :y="arrowTip(line)[1] + 6" class="gate-arrow-label in">IN</text>
-                  <text :x="arrowTail(line)[0] + 8" :y="arrowTail(line)[1] - 6" class="gate-arrow-label out">OUT</text>
+                  <template v-if="isOrdinaryDirectionLine()">
+                    <line
+                      :x1="line.start[0]" :y1="line.start[1]"
+                      :x2="line.end[0]" :y2="line.end[1]"
+                      class="gate-arrow ordinary-direction-line"
+                      marker-end="url(#gate-arrow-head)"
+                    />
+                  </template>
+                  <template v-else>
+                    <line
+                      :x1="arrowTail(line)[0]" :y1="arrowTail(line)[1]"
+                      :x2="arrowTip(line)[0]" :y2="arrowTip(line)[1]"
+                      class="gate-arrow"
+                      marker-end="url(#gate-arrow-head)"
+                    />
+                    <text :x="arrowTip(line)[0] + 8" :y="arrowTip(line)[1] + 6" class="gate-arrow-label in">IN</text>
+                    <text :x="arrowTail(line)[0] + 8" :y="arrowTail(line)[1] - 6" class="gate-arrow-label out">OUT</text>
+                  </template>
                   <text
                     :x="(line.start[0] + line.end[0]) / 2 + 10"
                     :y="(line.start[1] + line.end[1]) / 2 - 10"

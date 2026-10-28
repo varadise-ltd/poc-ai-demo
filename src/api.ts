@@ -67,7 +67,15 @@ async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Re
 
 /** Absolute backend base URL currently in use (shown in error messages). */
 export function apiBaseUrl(): string {
-  return BASE_URL || window.location.origin
+  if (BASE_URL) return BASE_URL
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    // In local development VITE_API_BASE is intentionally empty and Vite
+    // proxies /api to port 8000. Showing window.location.origin here exposed
+    // port 5173 as if it were the backend, which made connectivity errors
+    // point users at the wrong service.
+    return `${window.location.protocol}//${window.location.hostname}:8000`
+  }
+  return 'http://localhost:8000'
 }
 
 /**
@@ -789,6 +797,31 @@ function toRoiPolygon(r: { id?: number | null; points?: [number, number][] }): R
   }
 }
 
+/**
+ * 判断 ROI 点集是否为归一化坐标（落在 [0,1] 的容差带内）。
+ *
+ * 历史 ROI 保存的是 ``Math.round`` 得到的整数像素坐标（真实 ROI 必有坐标 > 1），
+ * 新数据保存的是浮点归一化坐标（0..1），因此用「是否全部在 [0,1] 内」即可区分。
+ * 前端显示时据此把归一化坐标按当前帧尺寸换算成像素，像素数据则原样使用。
+ *
+ * 容差是必要的：ROI 编辑器的「扩展画布」允许在帧边缘外补点，保存的归一化坐标
+ * 可能略小于 0 或略大于 1（如 1.004）。若严格限定 [0,1]，这类 ROI 会被误判为
+ * 历史像素坐标，导致设置编辑器与 Preview 都把它画成左上角 1px 的小多边形。
+ */
+export function isNormalizedRoiPoints(points: [number, number][]): boolean {
+  if (!points.length) return false
+  const tol = 0.25
+  return points.every(
+    ([x, y]) =>
+      Number.isFinite(x) &&
+      Number.isFinite(y) &&
+      x >= -tol &&
+      x <= 1 + tol &&
+      y >= -tol &&
+      y <= 1 + tol,
+  )
+}
+
 export async function getRoi(scriptId: string, camera: string): Promise<RoiInfo> {
   const q = new URLSearchParams({ camera })
   const res = await request(`${BASE_URL}/api/roi/${scriptId}?${q.toString()}`)
@@ -1109,6 +1142,8 @@ export interface PortOverview {
     dwell_seconds: number | null
     dwell: string | null
     active: boolean
+    vehicle_state: 'empty' | 'loading' | 'loaded' | 'unknown'
+    loaded: boolean
     loading: boolean
     appearance: {
       enter: { aspect_ratio: number | null; area_ratio: number | null; histogram_dim: number; ocr_text_ids?: string[] } | null

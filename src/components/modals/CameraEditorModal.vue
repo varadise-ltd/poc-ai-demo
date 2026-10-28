@@ -163,7 +163,7 @@ async function validateStream(): Promise<boolean> {
     // problem, so say so instead of leaving the user thinking the URL failed
     // video validation.
     rtmpError.value = err instanceof TypeError
-      ? `Cannot reach the backend at ${apiBaseUrl()} — start the service, then click Check stream again. The stream URL was not validated.`
+      ? `Cannot reach the backend at ${apiBaseUrl()} — start poc-ai-service on port 8000, then click Check stream again. The stream URL was not validated.`
       : err instanceof Error ? err.message : String(err)
     return false
   } finally {
