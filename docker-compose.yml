@@ -1,4 +1,4 @@
-# 独立前端：nginx 仅提供静态页面；浏览器直接访问 112 后端的 8000 端口。
+# 独立前端：Node 静态服务器提供页面，无 nginx、无 API 反向代理。
 # VITE_API_BASE 为构建时参数，修改后必须重新 build，restart 不生效。
 # 不依赖后端 Compose 项目或共享 Docker 网络。
 name: poc-ai-demo
@@ -7,14 +7,11 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.standalone
       args:
         VITE_API_BASE: "${POC_API_BASE:-http://192.168.51.7:8000}"
-    image: poc-ai-demo:latest
+    image: poc-ai-demo:standalone
     container_name: poc-ai-demo
     ports:
-      - "${POC_FRONTEND_PORT:-5173}:80"
-    environment:
-      # 兼容镜像中现有 nginx 模板；前端正常 API 调用不走此代理。
-      BACKEND_HOST: "${POC_BACKEND_HOST:-192.168.51.7}"
+      - "${POC_FRONTEND_PORT:-5173}:5173"
     restart: unless-stopped
