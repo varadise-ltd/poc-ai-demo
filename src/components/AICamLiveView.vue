@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchTenantAsset, getCraneJobs, getCraneLive, getFaceLive, getGateLive, getPortOverview, getRoi, isNormalizedRoiPoints, snapshotUrl, streamUrl } from '../api'
-import type { CraneJob, CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PortOverview, RoiPolygon } from '../api'
+import { fetchTenantAsset, getCraneJobs, getCraneLive, getFaceLive, getGateLive, getPickupBayLive, getPortOverview, getRoi, isNormalizedRoiPoints, snapshotUrl, streamUrl } from '../api'
+import type { CraneJob, CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PickupBayLiveInfo, PortOverview, RoiPolygon } from '../api'
 import type { Camera, EventItem, Script } from '../types'
 import { formatDisplayConfidence } from '../confidence'
 import {
@@ -245,6 +245,7 @@ async function pollTickInternal(): Promise<void> {
   if (isPortScript.value && isPortMonitoringRunning.value) {
     void loadPortOverview()
   }
+  if (isPickupBayScript.value) void loadPickupBayLive()
   // 其余实时统计只在真正预览时才需要，未 preview 时不拉，避免无谓轮询。
   if (!previewing.value) return
   void loadDetectionEvents()
@@ -298,6 +299,8 @@ function stopPolling(): void {
   craneJobsError.value = ''
   portOverview.value = null
   portOverviewError.value = ''
+  pickupBayLive.value = null
+  pickupBayLiveError.value = ''
 }
 
 // ---------------------------------------------------------------------------
@@ -334,7 +337,30 @@ const craneLiveError = ref('')
 // （pick-up / landing）与对应时间差（每次装卸一个集装箱的耗时）。
 const craneJobs = ref<CraneJob[]>([])
 const craneJobsError = ref('')
-const isPortScript = computed(() => selectedScript.value?.isPort === true)
+const isPickupBayScript = computed(() => selectedScript.value?.isPickupBay === true || selectedScript.value?.detectorType === 'pickup_bay')
+const isPortScript = computed(() => selectedScript.value?.isPort === true && !isPickupBayScript.value)
+const pickupBayLive = ref<PickupBayLiveInfo | null>(null)
+const pickupBayLiveError = ref('')
+const pickupBayThreshold = computed(() => {
+  const param = selectedScript.value?.params?.find((item) => item.key === 'STOP_TOO_LONG_THRESHOLD')
+  return typeof param?.value === 'number' ? param.value : 120
+})
+const pickupBayOverdue = computed(() =>
+  (pickupBayLive.value?.trucks ?? []).filter((vehicle) => (vehicle.dwell_seconds ?? 0) >= pickupBayThreshold.value),
+)
+
+async function loadPickupBayLive(): Promise<void> {
+  if (!isPickupBayScript.value || !isRunning.value || !store.selectedCamera) {
+    pickupBayLive.value = null
+    return
+  }
+  try {
+    pickupBayLive.value = await getPickupBayLive(store.selectedCamera, store.selectedScriptId)
+    pickupBayLiveError.value = ''
+  } catch (err) {
+    pickupBayLiveError.value = err instanceof Error ? err.message : String(err)
+  }
+}
 // 港口两类模型按 detector_type 区分（ROI 为核心）：port_terminal = 集卡装卸區
 //（车辆进入/离开 ROI 计算停留时长，箭头仅示意）；port_crane = 岸橋吊具 cycle；
 // port_combined = 一个模型同时覆盖 truck + crane 两块读数。
@@ -544,6 +570,7 @@ watch([() => store.selectedCamera, () => store.selectedScriptId], () => {
   if (isRunning.value || isPortMonitoringRunning.value) {
     void loadGateLive()
     void loadFaceLive()
+    void loadPickupBayLive()
     void loadCraneLive()
     void loadCraneJobs()
     void loadPortOverview()
@@ -982,6 +1009,42 @@ onBeforeUnmount(() => {
           <p v-else class="subtitle">
             Loading the cross-camera truck + crane overview for {{ selectedScript.name }}…
           </p>
+        </div>
+
+        <div v-if="isPickupBayScript" class="gate-live pickup-bay-live">
+          <div class="gate-live-head">
+            <strong>{{ selectedScript.name }} · pickup bay dwell</strong>
+            <span class="subtitle">Vehicle-only monitoring · no student or collector identification</span>
+            <span v-if="pickupBayLive?.mode === 'MOCK'" class="gate-live-badge">DEMO</span>
+          </div>
+          <p v-if="pickupBayLiveError" class="subtitle" style="color: var(--red)">{{ pickupBayLiveError }}</p>
+          <template v-if="pickupBayLive">
+            <div class="gate-live-stats">
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Vehicles in pickup bay</span>
+                <strong class="gate-live-value">{{ pickupBayLive.trucks_in_roi }}</strong>
+              </div>
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Stop-too-long vehicles</span>
+                <strong class="gate-live-value" :class="{ out: pickupBayOverdue.length }">{{ pickupBayOverdue.length }}</strong>
+              </div>
+              <div class="gate-live-stat">
+                <span class="gate-live-label">Threshold</span>
+                <strong class="gate-live-value">{{ pickupBayThreshold }}s</strong>
+              </div>
+            </div>
+            <div v-if="pickupBayLive.trucks.length" class="gate-live-lines">
+              <div v-for="(vehicle, index) in pickupBayLive.trucks" :key="vehicle.track_id ?? vehicle.entered_at ?? index" class="gate-live-line">
+                <span class="gate-live-line-name">Vehicle #{{ vehicle.track_id ?? '—' }}<span class="subtitle">{{ vehicle.entered_at ? `entered ${formatTime(vehicle.entered_at)}` : 'tracking' }}</span></span>
+                <span class="gate-live-line-dir" :class="{ 'pickup-bay-overdue': (vehicle.dwell_seconds ?? 0) >= pickupBayThreshold }">
+                  <span :class="(vehicle.dwell_seconds ?? 0) >= pickupBayThreshold ? 'out' : 'in'">{{ (vehicle.dwell_seconds ?? 0) >= pickupBayThreshold ? 'STOP TOO LONG' : 'within threshold' }}</span>
+                  <span class="subtitle">dwell {{ formatSeconds(vehicle.dwell_seconds) }}</span>
+                </span>
+              </div>
+            </div>
+            <p v-else class="subtitle">No vehicle is currently inside the pickup-bay ROI.</p>
+          </template>
+          <p v-else class="subtitle">{{ selectedScript.name }} is not running on {{ store.selectedCamera }} — start it from the AI model page.</p>
         </div>
 
         <!-- Detection result rows are intentionally not rendered here. Open

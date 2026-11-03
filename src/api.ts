@@ -553,6 +553,7 @@ function toScript(r: ScriptRecord): Script {
     isRoiCounting: r.is_roi_counting ?? false,
     isFace: r.is_face ?? false,
     isPort: r.is_port ?? false,
+    isPickupBay: r.detector_type === 'pickup_bay',
     detectorType: r.detector_type ?? undefined,
     params,
   }
@@ -1150,6 +1151,32 @@ export interface PortOverview {
       exit: { aspect_ratio: number | null; area_ratio: number | null; histogram_dim: number; ocr_text_ids?: string[] } | null
     } | null
   }[]
+}
+
+/** Live pickup-bay readout; the backend reuses the port live contract. */
+export interface PickupBayLiveInfo {
+  camera_id: string
+  script_id: string | null
+  running: boolean
+  mode: string
+  trucks_in_roi: number
+  updated_at: string | null
+  trucks: {
+    track_id: number | null
+    entered_at: string | null
+    dwell_seconds: number | null
+    dwell: string | null
+    loading: boolean
+    vehicle_state: string
+    confidence?: number | null
+  }[]
+}
+
+export async function getPickupBayLive(cameraId: string, scriptId?: string): Promise<PickupBayLiveInfo> {
+  const q = new URLSearchParams({ camera_id: cameraId })
+  if (scriptId) q.set('script_id', scriptId)
+  const res = await request(`${BASE_URL}/api/port/live?${q.toString()}`)
+  return handle<PickupBayLiveInfo>(res)
 }
 
 export async function getPortOverview(scriptId?: string, limit = 50): Promise<PortOverview> {

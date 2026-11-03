@@ -42,6 +42,8 @@ export interface Script {
   isFace?: boolean
   /** Port script (port / port_crane): preview shows the port live readout. */
   isPort?: boolean
+  /** Pickup bay vehicle dwell script: preview shows stop-too-long readout. */
+  isPickupBay?: boolean
   /** Detector type (e.g. port_terminal / port_crane) — distinguishes port sub-models. */
   detectorType?: string
 }

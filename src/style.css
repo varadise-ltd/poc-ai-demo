@@ -1057,6 +1057,10 @@ input[type='range'].param-range::-moz-range-thumb {
   color: #cc4444;
 }
 
+.pickup-bay-overdue {
+  color: #cc4444;
+}
+
 /* Quay crane cycle job list: pick-up → landing with per-container cycle time. */
 .crane-job-row {
   align-items: flex-start;
