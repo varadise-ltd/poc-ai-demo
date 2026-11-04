@@ -19,7 +19,7 @@ WORKDIR /app
 # 空字符串 = 同源相对路径（api.ts: VITE_API_BASE 已定义则直接使用，未定义时
 # 才回退到「页面所在主机的 8000 端口」）
 ARG VITE_API_BASE=""
-ENV VITE_API_BASE=$VITE_API_BASE
+ENV VITE_API_BASE=${VITE_API_BASE}
 
 COPY package.json package-lock.json ./
 RUN npm ci
