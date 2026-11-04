@@ -2,26 +2,13 @@
 
 import type { Alert, Camera, CameraAI, CameraModelRun, DashboardQueryResult, FaceData, FaceMeta, FaceValidation, Script, ScriptParam, ScriptRun } from './types'
 
-// 构建时注入的后端地址：Docker/nginx 下为空字符串 → 走同源相对路径 /api/...
-const CONFIGURED_BASE: string | undefined = import.meta.env.VITE_API_BASE
-
-/**
- * Backend base URL.
- *
- * - Docker/nginx build (``VITE_API_BASE=""``): same-origin relative paths.
- * - Dev server (no ``VITE_API_BASE``): reuse the host the page was served from
- *   with the backend port, so the UI keeps working when it is opened through
- *   ``127.0.0.1`` or a LAN IP instead of the literal ``localhost``.
- */
-function resolveBaseUrl(): string {
-  if (CONFIGURED_BASE !== undefined) return CONFIGURED_BASE
-  if (typeof window !== 'undefined' && window.location?.hostname) {
-    return `${window.location.protocol}//${window.location.hostname}:8000`
-  }
-  return 'http://localhost:8000'
-}
-
-const BASE_URL: string = resolveBaseUrl()
+// Vite 在构建期注入 VITE_API_BASE：
+// - 显式配置，例如 internal API 域名 → 浏览器直接调用该地址；
+// - 生产环境留空 → 使用当前页面同源的 /api/...（由 nginx 转发到 51.7）；
+// - 开发环境留空 → 使用本机 FastAPI 的 8000 端口。
+// trim() 可避免 .env 中意外空格导致生成非法 URL。
+const configuredBaseUrl = import.meta.env.VITE_API_BASE?.trim()
+const BASE_URL: string = configuredBaseUrl || (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
 const ORG_STORAGE_KEY = 'cosmos.activeOrgId'
 const PROJECT_STORAGE_KEY = 'cosmos.activeProjectId'
