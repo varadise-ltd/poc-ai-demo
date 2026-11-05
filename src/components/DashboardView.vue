@@ -11,7 +11,7 @@ const defaultDashboards: DashboardDefinition[] = [
   { id: 'face', title: 'Face Recognition New', subtitle: 'Face Recognition New' },
   { id: 'inout', title: 'In / Out', subtitle: 'People Counting' },
   { id: 'ppe', title: 'PPE detection', subtitle: 'PPE detection' },
-  { id: 'object', title: 'Object detection', subtitle: 'Human detection' },
+  { id: 'object', title: 'Human detection', subtitle: 'Human detections grouped by zone' },
   { id: 'segregation', title: 'Pedestrian / Vehicle', subtitle: 'Segregation' },
 ]
 
@@ -67,7 +67,7 @@ const descriptions: Record<string, string> = {
   face: 'Who was recognized from the face library, unknown visitors, and per-person records.',
   inout: 'People crossing configured count lines (add-line + direction), per line.',
   ppe: 'People not meeting PPE requirements, with per-violation detail.',
-  object: 'Humans detected by the Human detection AI model, with per-detection detail.',
+  object: 'Humans detected by the Human detection AI model, grouped by zone with per-detection detail.',
   segregation: 'People and vehicles detected by the Pedestrian / Vehicle Segregation AI model, with per-detection counts.',
 }
 let requestId = 0
@@ -130,7 +130,7 @@ function togglePerson(name: string): void {
 // --- Evidence snapshot viewer ---------------------------------------------
 // Every detection record carries the annotated frame captured with its event,
 // so the same thumbnail + full-view experience works on all four dashboards
-// (Face / In-Out / PPE / Object). Records without a stored snapshot stay
+// (Face / In-Out / PPE / Human detection). Records without a stored snapshot stay
 // visible but the thumbnail is disabled instead of opening an empty lightbox.
 const snapshotRecords = computed(() => visibleRecords.value.filter((record) => record.snapshot_url))
 const viewerIndex = ref<number | null>(null)

@@ -52,6 +52,20 @@ async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Re
   return fetch(input, requestInit(init))
 }
 
+/**
+ * Control requests must fail fast over the cloud-to-edge path. A stalled
+ * upstream should not leave a Run/Stop button pending indefinitely.
+ */
+async function controlRequest(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 12_000)
+  try {
+    return await fetch(input, requestInit({ ...init, signal: controller.signal }))
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 /** Absolute backend base URL currently in use (shown in error messages). */
 export function apiBaseUrl(): string {
   if (BASE_URL) return BASE_URL
@@ -659,7 +673,7 @@ export async function runScriptCamera(scriptId: string, camera: string): Promise
   const startedAt = performance.now()
   console.log(`[run] AI model RUN requested: script=${scriptId} camera="${camera}" requestId=${requestId}`)
   try {
-    const res = await request(
+    const res = await controlRequest(
       `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/run`,
       { method: 'POST', headers: { 'X-Request-ID': requestId } },
     )
@@ -685,7 +699,7 @@ export async function stopScriptCamera(scriptId: string, camera: string): Promis
   const startedAt = performance.now()
   console.log(`[run] AI model STOP requested: script=${scriptId} camera="${camera}" requestId=${requestId}`)
   try {
-    const res = await request(
+    const res = await controlRequest(
       `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/stop`,
       { method: 'POST', headers: { 'X-Request-ID': requestId } },
     )

@@ -35,6 +35,9 @@ const streamAddSelection = ref<Record<string, string>>({})
 // 按钮进入 pending（禁用 + 显示「…」），避免后端响应前的重复点击竞态与「点了没
 // 反应」的观感；请求完成/失败后复位。
 const cameraPending = ref<Record<string, boolean>>({})
+// Model-level Run all / Stop all guard. Without this, a second click can race
+// the first multi-camera operation while the WAN request is still pending.
+const modelPending = ref<Record<string, boolean>>({})
 
 function toggleControlExpand(id: string): void {
   controlExpanded.value[id] = !controlExpanded.value[id]
@@ -161,10 +164,14 @@ async function onRemoveStreamCamera(scriptId: string, cam: string): Promise<void
 }
 
 async function onToggleRun(id: string): Promise<void> {
+  if (modelPending.value[id]) return
+  modelPending.value[id] = true
   try {
     await toggleRun(id)
   } catch (err) {
     alert(err instanceof Error ? err.message : String(err))
+  } finally {
+    modelPending.value[id] = false
   }
 }
 
@@ -441,10 +448,11 @@ onBeforeUnmount(() => {
                 v-else
                 class="btn"
                 :class="isRunning(s.id) ? 'dark' : 'primary'"
+                :disabled="modelPending[s.id]"
                 :title="isRunning(s.id) ? 'Stop every camera of this AI model' : 'Run on every online camera'"
                 @click="onToggleRun(s.id)"
               >
-                {{ isRunning(s.id) ? 'Stop all' : 'Run all' }}
+                {{ modelPending[s.id] ? (isRunning(s.id) ? 'Stopping…' : 'Starting…') : (isRunning(s.id) ? 'Stop all' : 'Run all') }}
               </button>
               <button class="btn" @click="openScriptDetail(s.id)">Detail</button>
               <button class="btn" @click="removeScript(s)">Delete</button>

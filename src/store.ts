@@ -352,16 +352,21 @@ export async function toggleScriptCameras(scriptId: string): Promise<void> {
   const script = store.scripts.find((s) => s.id === scriptId)
   if (!script) return
   const stopping = scriptHasRunningCamera(scriptId)
-  for (const camera of script.cameras) {
+  const cameras = script.cameras.filter((camera) => {
     const run = cameraRun(scriptId, camera)
-    if (stopping ? run.status === 'running' : run.can_run) {
-      await toggleCameraRun(scriptId, camera)
-    }
-  }
+    return stopping ? run.status === 'running' : run.can_run
+  })
+
+  // Cameras are independent workers. Start/stop them concurrently so a slow
+  // RTSP handshake on one camera does not delay the other camera over WAN.
+  const results = await Promise.allSettled(cameras.map((camera) => toggleCameraRun(scriptId, camera)))
   // Keep the aggregate model state and each per-camera row synchronized. This
   // is especially important for port_combined, where truck and quay-crane
   // workers must run concurrently on two different cameras.
   await loadScriptCameraRuns(scriptId)
+
+  const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+  if (failed) throw failed.reason
 }
 
 /** Mirror the aggregate camera state into the script-level run state. */
