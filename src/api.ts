@@ -4,13 +4,13 @@ import type { Alert, Camera, CameraAI, CameraModelRun, DashboardQueryResult, Fac
 
 // Backend routing is selected at frontend build time. Keep one simple switch:
 //   VITE_BACKEND_TARGET=local -> explicit Local GPU endpoint
-//   VITE_BACKEND_TARGET=cloud -> VITE_CLOUD_API_BASE, or same-origin /api
-//     when empty; nginx then routes /api to BACKEND_HOST at runtime.
+//   VITE_BACKEND_TARGET=cloud -> same-origin /api (no build-time base URL);
+//     nginx routes /api to the runtime BACKEND_HOST env var.
 const backendTarget = import.meta.env.VITE_BACKEND_TARGET?.trim().toLowerCase() === 'cloud' ? 'cloud' : 'local'
 export type BackendMode = 'local' | 'cloud'
 const BASE_URL: string = backendTarget === 'local'
   ? (import.meta.env.VITE_LOCAL_API_BASE?.trim() || 'https://internal-poc-aicctv-dev.varadise.cloud')
-  : (import.meta.env.VITE_CLOUD_API_BASE?.trim() || '')
+  : ''
 
 export function getBackendMode(): BackendMode { return backendTarget }
 export function backendLabel(): string { return backendTarget === 'local' ? 'Local GPU' : 'Cloud CPU' }
