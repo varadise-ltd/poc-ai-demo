@@ -1,5 +1,6 @@
 # 独立前端：Node 静态服务器提供页面，无 nginx、无 API 反向代理。
-# VITE_API_BASE 为构建时参数，修改后必须重新 build，restart 不生效。
+# Local/Cloud standalone 模式都通过 POC_*_API_BASE 提供浏览器可访问的后端地址；
+# BACKEND_HOST 只对使用 Dockerfile nginx 镜像的 Cloud 部署生效。
 # 不依赖后端 Compose 项目或共享 Docker 网络。
 name: poc-ai-demo
 
@@ -9,7 +10,7 @@ services:
       context: .
       dockerfile: Dockerfile.standalone
       args:
-        VITE_BACKEND_TARGET: "${POC_BACKEND_TARGET:-local}"
+        VITE_BACKEND_TARGET: "${POC_BACKEND_TARGET:-cloud}"
         VITE_LOCAL_API_BASE: "${POC_LOCAL_API_BASE:-https://internal-poc-aicctv-dev.varadise.cloud}"
         VITE_CLOUD_API_BASE: "${POC_CLOUD_API_BASE:-}"
     image: poc-ai-demo:standalone

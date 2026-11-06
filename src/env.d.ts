@@ -7,7 +7,6 @@ declare module '*.vue' {
 }
 
 interface ImportMetaEnv {
-  readonly VITE_API_BASE?: string
   readonly VITE_BACKEND_TARGET?: 'local' | 'cloud'
   readonly VITE_LOCAL_API_BASE?: string
   readonly VITE_CLOUD_API_BASE?: string

@@ -6,9 +6,9 @@
 # 推荐通过 poc-ai-service/docker-compose.yml 启动（nginx 反代 /api/ 到后端）。
 #
 # 说明：
-#   - 构建参数 VITE_API_BASE 默认置空 → 前端使用同源相对路径 /api/...，
-#     由 nginx 反向代理到后端容器；如需直连其他后端地址，构建时传入即可：
-#       docker build --build-arg VITE_API_BASE=http://10.0.0.5:8000 -t poc-ai-demo .
+#   - Cloud 模式使用同源相对路径 /api/...，由 nginx 根据运行时的
+#     BACKEND_HOST 反向代理到 cloud backend。
+#   - Local 模式才使用 VITE_LOCAL_API_BASE 直连指定后端。
 # =============================================================================
 
 # ---- 构建阶段 ----
@@ -16,10 +16,12 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-# 空字符串 = 同源相对路径（api.ts: VITE_API_BASE 已定义则直接使用，未定义时
-# 才回退到「页面所在主机的 8000 端口」）
-ARG VITE_API_BASE=""
-ENV VITE_API_BASE=${VITE_API_BASE}
+ARG VITE_BACKEND_TARGET=cloud
+ARG VITE_CLOUD_API_BASE=""
+ARG VITE_LOCAL_API_BASE=""
+ENV VITE_BACKEND_TARGET=${VITE_BACKEND_TARGET} \
+    VITE_CLOUD_API_BASE=${VITE_CLOUD_API_BASE} \
+    VITE_LOCAL_API_BASE=${VITE_LOCAL_API_BASE}
 
 COPY package.json package-lock.json ./
 RUN npm ci

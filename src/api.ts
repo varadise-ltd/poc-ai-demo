@@ -4,14 +4,12 @@ import type { Alert, Camera, CameraAI, CameraModelRun, DashboardQueryResult, Fac
 
 // Backend routing is selected at frontend build time. Keep one simple switch:
 //   VITE_BACKEND_TARGET=local -> explicit Local GPU endpoint
-//   VITE_BACKEND_TARGET=cloud -> same-origin /api, routed by the Cloud service
-// environment/nginx configuration. The current Local GPU deployment uses the
-// Cloud HTTPS hostname as its explicit endpoint, as required by deployment.
-const configuredBaseUrl = import.meta.env.VITE_API_BASE?.trim()
+//   VITE_BACKEND_TARGET=cloud -> VITE_CLOUD_API_BASE, or same-origin /api
+//     when empty; nginx then routes /api to BACKEND_HOST at runtime.
 const backendTarget = import.meta.env.VITE_BACKEND_TARGET?.trim().toLowerCase() === 'cloud' ? 'cloud' : 'local'
 export type BackendMode = 'local' | 'cloud'
 const BASE_URL: string = backendTarget === 'local'
-  ? (import.meta.env.VITE_LOCAL_API_BASE?.trim() || configuredBaseUrl || 'https://internal-poc-aicctv-dev.varadise.cloud')
+  ? (import.meta.env.VITE_LOCAL_API_BASE?.trim() || 'http://localhost:8000')
   : (import.meta.env.VITE_CLOUD_API_BASE?.trim() || '')
 
 export function getBackendMode(): BackendMode { return backendTarget }
@@ -43,6 +41,8 @@ function urlContext(name: string): string | null {
 
 // Cosmos iframe/deep-link context has priority over an old browser selection.
 // The values are persisted after initialization so refreshes remain scoped.
+// Cosmos only passes the ids; the org/project **names** are resolved by the
+// backend (poc-ai-service) through profile-service, not by the browser.
 const URL_ORG_ID = (urlContext('orgId') || urlContext('porgId'))?.trim()
 const URL_PROJECT_ID = urlContext('projectId')?.trim()
 
@@ -92,11 +92,10 @@ async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Re
 export function apiBaseUrl(): string {
   if (BASE_URL) return BASE_URL
   if (typeof window !== 'undefined' && window.location?.hostname) {
-    // In local development VITE_API_BASE is intentionally empty and Vite
-    // proxies /api to port 8000. Showing window.location.origin here exposed
-    // port 5173 as if it were the backend, which made connectivity errors
-    // point users at the wrong service.
-    return `${window.location.protocol}//${window.location.hostname}:8000`
+    // Cloud mode uses same-origin /api, which is routed by nginx to
+    // BACKEND_HOST. Report the browser-visible origin instead of exposing
+    // an internal backend hostname that the browser cannot reach directly.
+    return window.location.origin
   }
   return 'http://localhost:8000'
 }
@@ -191,7 +190,10 @@ export async function syncTenantContext(orgId = activeOrgId, projectId = activeP
   const res = await request(`${BASE_URL}/api/orgs/sync-context`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ org_id: orgId, project_id: projectId }),
+    body: JSON.stringify({
+      org_id: orgId,
+      project_id: projectId,
+    }),
   })
   return handle(res)
 }
