@@ -9,7 +9,9 @@ services:
       context: .
       dockerfile: Dockerfile.standalone
       args:
-        VITE_API_BASE: "${POC_API_BASE:-http://192.168.51.7:8000}"
+        VITE_BACKEND_TARGET: "${POC_BACKEND_TARGET:-local}"
+        VITE_LOCAL_API_BASE: "${POC_LOCAL_API_BASE:-https://internal-poc-aicctv-dev.varadise.cloud}"
+        VITE_CLOUD_API_BASE: "${POC_CLOUD_API_BASE:-}"
     image: poc-ai-demo:standalone
     container_name: poc-ai-demo
     ports:

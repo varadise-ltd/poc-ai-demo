@@ -5,6 +5,7 @@ import {
   store,
   updateScriptMetaRecord,
 } from '../../store'
+import { getOrganization } from '../../api'
 import type { Script } from '../../types'
 
 const isAddMode = computed(() => store.scriptDetailMode === 'add')
@@ -15,13 +16,16 @@ const script = computed(() => store.scripts.find((s) => s.id === store.currentSc
 const hasParams = computed(() => !!script.value?.params?.length)
 
 // Editable organization / scenario (persisted to backend scripts.db on save)
-const organization = ref('')
+const organizationName = ref('')
 const scenario = ref('')
 
 watch(
   () => [store.showScriptDetail, script.value?.id],
   () => {
-    organization.value = script.value?.organization ?? ''
+    organizationName.value = ''
+    if (store.activeOrgId) {
+      getOrganization(store.activeOrgId).then((org) => { organizationName.value = org.name }).catch(() => {})
+    }
     scenario.value = script.value?.scenario ?? ''
   },
   { immediate: true },
@@ -85,7 +89,6 @@ function saveScript(): void {
       name,
       baseScriptId: baseScriptId.value,
       description: store.newScriptDescription,
-      organization: organization.value.trim(),
       scenario: scenario.value.trim(),
     })
       .then((script) => {
@@ -98,7 +101,6 @@ function saveScript(): void {
   }
   if (script.value?.id) {
     updateScriptMetaRecord(script.value.id, {
-      organization: organization.value.trim(),
       scenario: scenario.value.trim(),
     }).catch((err) => alert(err instanceof Error ? err.message : String(err)))
   }
@@ -141,7 +143,7 @@ function saveScript(): void {
             </div>
             <div class="field">
               <label>Organization (owner tenant)</label>
-              <input v-model="organization" :readonly="isAddMode" placeholder="e.g. Operations Dept." />
+              <input :value="organizationName || store.activeOrgId" readonly />
             </div>
             <div class="field">
               <label>Scenario (usage category)</label>

@@ -15,6 +15,9 @@ export const store = reactive({
   // Active tenant. The API client sends this as X-Organization-Id on every request.
   activeOrgId: api.getActiveOrgId(),
   projectId: api.getActiveProjectId(),
+  // 展示用友好名称（profile-service 权威，后端落库后回读）；未解析时回退显示 id。
+  activeOrgName: '',
+  activeProjectName: '',
   // Navigation
   activeTab: 'demo' as TabId,
   // Configuration 子页：Camera / AI model / Face management。
@@ -202,6 +205,18 @@ export async function loadScripts(): Promise<void> {
 export async function setActiveOrgId(orgId: string): Promise<void> {
   api.setActiveOrgId(orgId)
   store.activeOrgId = api.getActiveOrgId()
+  store.selectedCamera = ''
+  store.selectedScriptId = ''
+  store.faceData = []
+  store.cameras = []
+  store.cameraAI = []
+  store.scripts = []
+  await Promise.all([loadScripts(), loadCameras(), loadFaces(), loadCameraAI()])
+}
+
+export async function setActiveProjectId(projectId: string): Promise<void> {
+  api.setActiveProjectId(projectId)
+  store.projectId = api.getActiveProjectId()
   store.selectedCamera = ''
   store.selectedScriptId = ''
   store.faceData = []

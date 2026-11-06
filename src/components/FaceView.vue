@@ -113,10 +113,10 @@ watch(
       </div>
       <div class="filter-bar">
         <div class="field">
-          <label>Active Org ID</label>
+          <label>Organization</label>
           <select v-model="faceFilterOrgId" :disabled="faceOrganizationsLoading || faceFilterLoading">
             <option v-for="org in faceOrganizations" :key="org.org_id" :value="org.org_id">
-              {{ org.org_id }}{{ org.name && org.name !== org.org_id ? ` · ${org.name}` : '' }}
+              {{ org.name || org.org_id }}
             </option>
           </select>
         </div>

@@ -2,28 +2,64 @@
 
 import type { Alert, Camera, CameraAI, CameraModelRun, DashboardQueryResult, FaceData, FaceMeta, FaceValidation, Script, ScriptParam, ScriptRun } from './types'
 
-// Vite 在构建期注入 VITE_API_BASE：
-// - 显式配置，例如 internal API 域名 → 浏览器直接调用该地址；
-// - 生产环境留空 → 使用当前页面同源的 /api/...（由 nginx 转发到 51.7）；
-// - 开发环境留空 → 使用本机 FastAPI 的 8000 端口。
-// trim() 可避免 .env 中意外空格导致生成非法 URL。
+// Backend routing is selected at frontend build time. Keep one simple switch:
+//   VITE_BACKEND_TARGET=local -> explicit Local GPU endpoint
+//   VITE_BACKEND_TARGET=cloud -> same-origin /api, routed by the Cloud service
+// environment/nginx configuration. The current Local GPU deployment uses the
+// Cloud HTTPS hostname as its explicit endpoint, as required by deployment.
 const configuredBaseUrl = import.meta.env.VITE_API_BASE?.trim()
-const BASE_URL: string = configuredBaseUrl || (import.meta.env.DEV ? 'http://localhost:8000' : '')
+const backendTarget = import.meta.env.VITE_BACKEND_TARGET?.trim().toLowerCase() === 'cloud' ? 'cloud' : 'local'
+export type BackendMode = 'local' | 'cloud'
+const BASE_URL: string = backendTarget === 'local'
+  ? (import.meta.env.VITE_LOCAL_API_BASE?.trim() || configuredBaseUrl || 'https://internal-poc-aicctv-dev.varadise.cloud')
+  : (import.meta.env.VITE_CLOUD_API_BASE?.trim() || '')
+
+export function getBackendMode(): BackendMode { return backendTarget }
+export function backendLabel(): string { return backendTarget === 'local' ? 'Local GPU' : 'Cloud CPU' }
+
+export interface InferenceDeviceInfo {
+  requested_device: string
+  device: string
+  mode: 'cpu' | 'gpu'
+  onnx_cuda_provider: boolean
+  restart_required_to_change: boolean
+}
+
+export async function getInferenceDevice(): Promise<InferenceDeviceInfo> {
+  const res = await request(`${BASE_URL}/api/runtime/device`)
+  return handle<InferenceDeviceInfo>(res)
+}
 
 const ORG_STORAGE_KEY = 'cosmos.activeOrgId'
 const PROJECT_STORAGE_KEY = 'cosmos.activeProjectId'
 const DEFAULT_ORG_ID = import.meta.env.VITE_DEFAULT_ORG_ID || 'default'
 const DEFAULT_PROJECT_ID = import.meta.env.VITE_DEFAULT_PROJECT_ID || 'default'
 
+function urlContext(name: string): string | null {
+  if (typeof window === 'undefined') return null
+  const params = new URLSearchParams(window.location.search)
+  return params.get(name) || params.get(name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`))
+}
+
+// Cosmos iframe/deep-link context has priority over an old browser selection.
+// The values are persisted after initialization so refreshes remain scoped.
+const URL_ORG_ID = (urlContext('orgId') || urlContext('porgId'))?.trim()
+const URL_PROJECT_ID = urlContext('projectId')?.trim()
+
 /** Active tenant used by all API calls. The backend remains the authority. */
 let activeOrgId = (() => {
   if (typeof window === 'undefined') return DEFAULT_ORG_ID
-  return window.localStorage.getItem(ORG_STORAGE_KEY)?.trim() || DEFAULT_ORG_ID
+  return URL_ORG_ID || window.localStorage.getItem(ORG_STORAGE_KEY)?.trim() || DEFAULT_ORG_ID
 })()
 let activeProjectId = (() => {
   if (typeof window === 'undefined') return DEFAULT_PROJECT_ID
-  return window.localStorage.getItem(PROJECT_STORAGE_KEY)?.trim() || DEFAULT_PROJECT_ID
+  return URL_PROJECT_ID || window.localStorage.getItem(PROJECT_STORAGE_KEY)?.trim() || DEFAULT_PROJECT_ID
 })()
+
+if (typeof window !== 'undefined') {
+  if (URL_ORG_ID) window.localStorage.setItem(ORG_STORAGE_KEY, URL_ORG_ID)
+  if (URL_PROJECT_ID) window.localStorage.setItem(PROJECT_STORAGE_KEY, URL_PROJECT_ID)
+}
 
 export function getActiveOrgId(): string {
   return activeOrgId
@@ -50,20 +86,6 @@ function requestInit(init: RequestInit = {}): RequestInit {
 
 async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   return fetch(input, requestInit(init))
-}
-
-/**
- * Control requests must fail fast over the cloud-to-edge path. A stalled
- * upstream should not leave a Run/Stop button pending indefinitely.
- */
-async function controlRequest(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), 12_000)
-  try {
-    return await fetch(input, requestInit({ ...init, signal: controller.signal }))
-  } finally {
-    window.clearTimeout(timeout)
-  }
 }
 
 /** Absolute backend base URL currently in use (shown in error messages). */
@@ -96,6 +118,82 @@ export interface OrganizationRecord {
   source: string
   status: 'active' | 'disabled'
   last_synced_at?: string | null
+}
+
+export interface ProjectRecord {
+  project_id: string
+  org_id: string
+  name: string
+  status?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export async function listProjects(orgId = activeOrgId): Promise<ProjectRecord[]> {
+  const res = await request(`${BASE_URL}/api/projects`, {
+    headers: { 'X-Organization-Id': orgId },
+  })
+  return handle<ProjectRecord[]>(res)
+}
+
+export async function getOrganization(orgId = activeOrgId): Promise<OrganizationRecord> {
+  return handle<OrganizationRecord>(await request(`${BASE_URL}/api/orgs/${encodeURIComponent(orgId)}`))
+}
+
+/** Save (upsert) an organization without calling profile-service. */
+export async function saveOrganization(orgId: string, name = ''): Promise<OrganizationRecord> {
+  const res = await request(`${BASE_URL}/api/orgs/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ org_id: orgId, name, source: 'cosmos' }),
+  })
+  return handle<OrganizationRecord>(res)
+}
+
+/** Update the organization display name mapped to an org_id. */
+export async function updateOrganization(orgId: string, name: string): Promise<OrganizationRecord> {
+  const res = await request(`${BASE_URL}/api/orgs/${encodeURIComponent(orgId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  return handle<OrganizationRecord>(res)
+}
+
+export async function getProject(projectId = activeProjectId): Promise<ProjectRecord> {
+  return handle<ProjectRecord>(await request(`${BASE_URL}/api/projects/${encodeURIComponent(projectId)}`))
+}
+
+/** Save (upsert) a project under the current organization. */
+export async function saveProject(projectId: string, name = '', orgId = activeOrgId): Promise<ProjectRecord> {
+  const res = await request(`${BASE_URL}/api/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Organization-Id': orgId },
+    body: JSON.stringify({ project_id: projectId, name }),
+  })
+  return handle<ProjectRecord>(res)
+}
+
+/** Update the project display name mapped to a project_id. */
+export async function updateProject(projectId: string, name: string): Promise<ProjectRecord> {
+  const res = await request(`${BASE_URL}/api/projects/${encodeURIComponent(projectId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  return handle<ProjectRecord>(res)
+}
+
+export async function syncTenantContext(orgId = activeOrgId, projectId = activeProjectId): Promise<{
+  organization: OrganizationRecord
+  project: ProjectRecord
+}> {
+  const res = await request(`${BASE_URL}/api/orgs/sync-context`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ org_id: orgId, project_id: projectId }),
+  })
+  return handle(res)
 }
 
 export async function listOrganizations(): Promise<OrganizationRecord[]> {
@@ -673,7 +771,7 @@ export async function runScriptCamera(scriptId: string, camera: string): Promise
   const startedAt = performance.now()
   console.log(`[run] AI model RUN requested: script=${scriptId} camera="${camera}" requestId=${requestId}`)
   try {
-    const res = await controlRequest(
+    const res = await request(
       `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/run`,
       { method: 'POST', headers: { 'X-Request-ID': requestId } },
     )
@@ -699,7 +797,7 @@ export async function stopScriptCamera(scriptId: string, camera: string): Promis
   const startedAt = performance.now()
   console.log(`[run] AI model STOP requested: script=${scriptId} camera="${camera}" requestId=${requestId}`)
   try {
-    const res = await controlRequest(
+    const res = await request(
       `${BASE_URL}/api/scripts/${encodeURIComponent(scriptId)}/cameras/${encodeURIComponent(camera)}/stop`,
       { method: 'POST', headers: { 'X-Request-ID': requestId } },
     )

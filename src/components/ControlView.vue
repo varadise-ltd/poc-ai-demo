@@ -225,9 +225,7 @@ async function loadScriptOrganizations(): Promise<void> {
 async function applyScriptFilter(): Promise<void> {
   scriptFilterLoading.value = true
   try {
-    if (scriptFilterOrgId.value !== store.activeOrgId) {
-      await setActiveOrgId(scriptFilterOrgId.value)
-    }
+    if (scriptFilterOrgId.value !== store.activeOrgId) await setActiveOrgId(scriptFilterOrgId.value)
     const { scripts } = await apiListScripts(
       scriptFilterStatus.value || undefined,
       undefined,
@@ -369,10 +367,10 @@ onBeforeUnmount(() => {
           </select>
         </div>
         <div class="field">
-          <label>Active Org ID</label>
+          <label>Organization</label>
           <select v-model="scriptFilterOrgId" :disabled="scriptOrganizationsLoading || scriptFilterLoading">
             <option v-for="org in scriptOrganizations" :key="org.org_id" :value="org.org_id">
-              {{ org.org_id }}{{ org.name && org.name !== org.org_id ? ` · ${org.name}` : '' }}
+              {{ org.name || org.org_id }}
             </option>
           </select>
         </div>

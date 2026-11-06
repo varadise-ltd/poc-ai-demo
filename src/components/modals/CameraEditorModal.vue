@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { apiBaseUrl, probeCamera, type CameraProbeResult } from '../../api'
+import { apiBaseUrl, listOrganizations, probeCamera, type CameraProbeResult, type OrganizationRecord } from '../../api'
 import { addCameraRecord, store, updateCameraRecord } from '../../store'
 
 const isAddMode = computed(() => store.cameraEditorMode === 'add')
@@ -14,6 +14,8 @@ const rtmp = ref('')
 const resolution = ref('1920 × 1080')
 const rotate = ref('0°')
 const orgId = ref('')
+const organizations = ref<OrganizationRecord[]>([])
+const organizationsLoading = ref(false)
 const orgAdmin = ref('')
 const saving = ref(false)
 const error = ref('')
@@ -34,6 +36,17 @@ const rotateError = ref('')
 const orgIdError = ref('')
 const orgAdminError = ref('')
 
+async function loadOrganizations(): Promise<void> {
+  organizationsLoading.value = true
+  try {
+    organizations.value = (await listOrganizations()).filter((org) => org.status === 'active')
+  } catch {
+    organizations.value = []
+  } finally {
+    organizationsLoading.value = false
+  }
+}
+
 // 「Check stream」成功标志：仅当「当前 URL」已探测成功才为 true。
 // save 依此决定是否跳过重复探测，保证保存接口的高效。
 const streamValidated = computed(
@@ -42,7 +55,7 @@ const streamValidated = computed(
 
 watch(
   () => store.showCameraEditor,
-  (show) => {
+  async (show) => {
     if (!show) return
     error.value = ''
     rtmpError.value = ''
@@ -59,6 +72,10 @@ watch(
     rotate.value = store.cameraEditorRotate
     orgId.value = store.cameraEditorOrgId || store.activeOrgId
     orgAdmin.value = store.cameraEditorOrgAdmin
+    await loadOrganizations()
+    if (!organizations.value.some((org) => org.org_id === orgId.value)) {
+      orgId.value = store.activeOrgId
+    }
   },
 )
 
@@ -134,9 +151,8 @@ function validateOrgAdmin(value: string): string | null {
 
 function validateOrgId(value: string): string | null {
   const v = value.trim()
-  if (!v) return 'Active Org ID is required.'
-  if (v.length > ORG_MAX) return `Active Org ID must be ${ORG_MAX} characters or fewer.`
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(v)) return 'Active Org ID contains invalid characters.'
+  if (!v) return 'Active Org Name is required.'
+  if (!organizations.value.some((org) => org.org_id === v)) return 'Select an organization from the backend list.'
   return null
 }
 
@@ -334,13 +350,19 @@ async function save(): Promise<void> {
             <div v-if="rotateError" class="rtmp-hint" style="color: var(--red)">{{ rotateError }}</div>
           </div>
           <div class="field full">
-            <label>Active Org ID</label>
-            <input
+            <label>Active Org Name</label>
+            <select
               v-model="orgId"
-              :class="{ invalid: !!orgIdError }"
-              placeholder="e.g. org-001"
+              :disabled="organizationsLoading || !organizations.length"
               @input="onOrgIdInput"
-            />
+              @change="onOrgIdInput"
+            >
+              <option v-if="organizationsLoading" value="">Loading organizations...</option>
+              <option v-else-if="!organizations.length" value="">No organizations available</option>
+              <option v-for="org in organizations" :key="org.org_id" :value="org.org_id">
+                {{ org.name || org.org_id }}
+              </option>
+            </select>
             <div v-if="orgIdError" class="rtmp-hint" style="color: var(--red)">{{ orgIdError }}</div>
           </div>
           <div class="field full">

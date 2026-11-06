@@ -269,10 +269,10 @@ onBeforeUnmount(() => {
           </select>
         </div>
         <div class="field">
-          <label>Active Org ID</label>
+          <label>Organization</label>
           <select v-model="cameraFilterOrgId" :disabled="cameraOrganizationsLoading || cameraFilterLoading">
             <option v-for="org in cameraOrganizations" :key="org.org_id" :value="org.org_id">
-              {{ org.org_id }}{{ org.name && org.name !== org.org_id ? ` · ${org.name}` : '' }}
+              {{ org.name || org.org_id }}
             </option>
           </select>
         </div>
