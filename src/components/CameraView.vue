@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { listOrganizations, redactUrl, type OrganizationRecord } from '../api'
+import { listCameras, listOrganizations, redactUrl, type OrganizationRecord } from '../api'
 import {
   addCameraAIRecord,
   cameraRun,
@@ -63,11 +63,12 @@ async function applyCameraFilter(): Promise<void> {
     // selector therefore changes the active tenant before reloading rows.
     if (cameraFilterOrgId.value !== store.activeOrgId) {
       await setActiveOrgId(cameraFilterOrgId.value)
-    } else {
-      await loadCameras(true)
     }
-    filteredCameras.value = store.cameras.filter((camera) =>
-      !cameraFilterStatus.value || camera.status === cameraFilterStatus.value,
+    // 把 status 作为查询参数交给后端，由后端按条件过滤并记录日志
+    // （前端不再本地过滤，保证列表与后端日志/数据一致）。
+    filteredCameras.value = await listCameras(
+      cameraFilterStatus.value || undefined,
+      cameraFilterOrgId.value || undefined,
     )
   } catch (err) {
     alert(err instanceof Error ? err.message : String(err))
