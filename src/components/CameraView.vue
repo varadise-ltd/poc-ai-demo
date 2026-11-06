@@ -38,7 +38,7 @@ async function loadCameraOrganizations(): Promise<void> {
     if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
       organizations.unshift({
         org_id: store.activeOrgId,
-        name: store.activeOrgId,
+        org_name: store.activeOrgName || store.activeOrgId,
         source: 'local',
         status: 'active',
       })
@@ -47,7 +47,7 @@ async function loadCameraOrganizations(): Promise<void> {
   } catch {
     cameraOrganizations.value = [{
       org_id: store.activeOrgId,
-      name: store.activeOrgId,
+      org_name: store.activeOrgName || store.activeOrgId,
       source: 'local',
       status: 'active',
     }]
@@ -273,7 +273,7 @@ onBeforeUnmount(() => {
           <label>Organization</label>
           <select v-model="cameraFilterOrgId" :disabled="cameraOrganizationsLoading || cameraFilterLoading">
             <option v-for="org in cameraOrganizations" :key="org.org_id" :value="org.org_id">
-              {{ org.name || org.org_id }}
+              {{ org.org_name || org.org_id }}
             </option>
           </select>
         </div>

@@ -360,7 +360,7 @@ async function save(): Promise<void> {
               <option v-if="organizationsLoading" value="">Loading organizations...</option>
               <option v-else-if="!organizations.length" value="">No organizations available</option>
               <option v-for="org in organizations" :key="org.org_id" :value="org.org_id">
-                {{ org.name || org.org_id }}
+                {{ org.org_name || org.org_id }}
               </option>
             </select>
             <div v-if="orgIdError" class="rtmp-hint" style="color: var(--red)">{{ orgIdError }}</div>

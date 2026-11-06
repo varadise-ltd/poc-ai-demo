@@ -24,7 +24,7 @@ watch(
   () => {
     organizationName.value = ''
     if (store.activeOrgId) {
-      getOrganization(store.activeOrgId).then((org) => { organizationName.value = org.name }).catch(() => {})
+      getOrganization(store.activeOrgId).then((org) => { organizationName.value = org.org_name }).catch(() => {})
     }
     scenario.value = script.value?.scenario ?? ''
   },

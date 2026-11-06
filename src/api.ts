@@ -114,9 +114,8 @@ export function assetUrl(path: string | null | undefined): string {
 
 export interface OrganizationRecord {
   org_id: string
-  name: string
-  /** UI-facing name; org_id remains the stable internal scope key. */
-  org_name?: string
+  /** UI-facing display name (org_id remains the stable internal scope key). */
+  org_name: string
   source: string
   status: 'active' | 'disabled'
   last_synced_at?: string | null
@@ -125,9 +124,8 @@ export interface OrganizationRecord {
 export interface ProjectRecord {
   project_id: string
   org_id: string
-  name: string
-  /** UI-facing name; project_id remains the stable internal scope key. */
-  project_name?: string
+  /** UI-facing display name (project_id remains the stable internal scope key). */
+  project_name: string
   status?: string
   created_at?: string
   updated_at?: string
@@ -145,21 +143,21 @@ export async function getOrganization(orgId = activeOrgId): Promise<Organization
 }
 
 /** Save (upsert) an organization without calling profile-service. */
-export async function saveOrganization(orgId: string, name = ''): Promise<OrganizationRecord> {
+export async function saveOrganization(orgId: string, orgName = ''): Promise<OrganizationRecord> {
   const res = await request(`${BASE_URL}/api/orgs/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ org_id: orgId, name, source: 'cosmos' }),
+    body: JSON.stringify({ org_id: orgId, org_name: orgName, source: 'cosmos' }),
   })
   return handle<OrganizationRecord>(res)
 }
 
 /** Update the organization display name mapped to an org_id. */
-export async function updateOrganization(orgId: string, name: string): Promise<OrganizationRecord> {
+export async function updateOrganization(orgId: string, orgName: string): Promise<OrganizationRecord> {
   const res = await request(`${BASE_URL}/api/orgs/${encodeURIComponent(orgId)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ org_name: orgName }),
   })
   return handle<OrganizationRecord>(res)
 }
@@ -169,21 +167,21 @@ export async function getProject(projectId = activeProjectId): Promise<ProjectRe
 }
 
 /** Save (upsert) a project under the current organization. */
-export async function saveProject(projectId: string, name = '', orgId = activeOrgId): Promise<ProjectRecord> {
+export async function saveProject(projectId: string, projectName = '', orgId = activeOrgId): Promise<ProjectRecord> {
   const res = await request(`${BASE_URL}/api/projects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Organization-Id': orgId },
-    body: JSON.stringify({ project_id: projectId, name }),
+    body: JSON.stringify({ project_id: projectId, project_name: projectName }),
   })
   return handle<ProjectRecord>(res)
 }
 
 /** Update the project display name mapped to a project_id. */
-export async function updateProject(projectId: string, name: string): Promise<ProjectRecord> {
+export async function updateProject(projectId: string, projectName: string): Promise<ProjectRecord> {
   const res = await request(`${BASE_URL}/api/projects/${encodeURIComponent(projectId)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ project_name: projectName }),
   })
   return handle<ProjectRecord>(res)
 }
@@ -482,6 +480,7 @@ interface CameraRecord {
   organization?: string
   org_id?: string
   org_name?: string
+  project_id?: string
   project_name?: string
   org_admin?: string
   deleted?: boolean
@@ -500,6 +499,7 @@ function toCamera(r: CameraRecord): Camera {
     organization: r.organization,
     orgId: r.org_id ?? r.organization,
     orgName: r.org_name,
+    projectId: r.project_id,
     projectName: r.project_name,
     org_admin: r.org_admin,
     deleted: r.deleted,

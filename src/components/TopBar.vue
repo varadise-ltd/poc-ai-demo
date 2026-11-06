@@ -22,8 +22,8 @@ async function loadTenantContext(): Promise<void> {
   // profile-service 是权威名称来源；失败时回退到后端本地落库的 records。
   try {
     const synced = await syncTenantContext(store.activeOrgId, store.projectId)
-    store.activeOrgName = synced.organization?.name || store.activeOrgId
-    store.activeProjectName = synced.project?.name || store.projectId
+    store.activeOrgName = synced.organization?.org_name || store.activeOrgId
+    store.activeProjectName = synced.project?.project_name || store.projectId
     return
   } catch {
     // profile-service 不可用 → 回退本地 records。
@@ -33,8 +33,8 @@ async function loadTenantContext(): Promise<void> {
       getOrganization(store.activeOrgId),
       getProject(store.projectId),
     ])
-    store.activeOrgName = org.name || store.activeOrgId
-    store.activeProjectName = selectedProject.name || store.projectId
+    store.activeOrgName = org.org_name || store.activeOrgId
+    store.activeProjectName = selectedProject.project_name || store.projectId
   } catch {
     store.activeOrgName = store.activeOrgId
     store.activeProjectName = store.projectId

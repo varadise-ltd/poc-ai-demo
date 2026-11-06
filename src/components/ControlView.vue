@@ -204,7 +204,7 @@ async function loadScriptOrganizations(): Promise<void> {
     if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
       organizations.unshift({
         org_id: store.activeOrgId,
-        name: store.activeOrgId,
+        org_name: store.activeOrgName || store.activeOrgId,
         source: 'local',
         status: 'active',
       })
@@ -213,7 +213,7 @@ async function loadScriptOrganizations(): Promise<void> {
   } catch {
     scriptOrganizations.value = [{
       org_id: store.activeOrgId,
-      name: store.activeOrgId,
+      org_name: store.activeOrgName || store.activeOrgId,
       source: 'local',
       status: 'active',
     }]
@@ -370,7 +370,7 @@ onBeforeUnmount(() => {
           <label>Organization</label>
           <select v-model="scriptFilterOrgId" :disabled="scriptOrganizationsLoading || scriptFilterLoading">
             <option v-for="org in scriptOrganizations" :key="org.org_id" :value="org.org_id">
-              {{ org.name || org.org_id }}
+              {{ org.org_name || org.org_id }}
             </option>
           </select>
         </div>

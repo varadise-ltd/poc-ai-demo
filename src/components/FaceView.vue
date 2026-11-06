@@ -18,7 +18,7 @@ async function loadFaceOrganizations(): Promise<void> {
     if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
       organizations.unshift({
         org_id: store.activeOrgId,
-        name: store.activeOrgId,
+        org_name: store.activeOrgName || store.activeOrgId,
         source: 'local',
         status: 'active',
       })
@@ -27,7 +27,7 @@ async function loadFaceOrganizations(): Promise<void> {
   } catch {
     faceOrganizations.value = [{
       org_id: store.activeOrgId,
-      name: store.activeOrgId,
+      org_name: store.activeOrgName || store.activeOrgId,
       source: 'local',
       status: 'active',
     }]
@@ -116,7 +116,7 @@ watch(
           <label>Organization</label>
           <select v-model="faceFilterOrgId" :disabled="faceOrganizationsLoading || faceFilterLoading">
             <option v-for="org in faceOrganizations" :key="org.org_id" :value="org.org_id">
-              {{ org.name || org.org_id }}
+              {{ org.org_name || org.org_id }}
             </option>
           </select>
         </div>
