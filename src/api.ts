@@ -115,6 +115,8 @@ export function assetUrl(path: string | null | undefined): string {
 export interface OrganizationRecord {
   org_id: string
   name: string
+  /** UI-facing name; org_id remains the stable internal scope key. */
+  org_name?: string
   source: string
   status: 'active' | 'disabled'
   last_synced_at?: string | null
@@ -124,6 +126,8 @@ export interface ProjectRecord {
   project_id: string
   org_id: string
   name: string
+  /** UI-facing name; project_id remains the stable internal scope key. */
+  project_name?: string
   status?: string
   created_at?: string
   updated_at?: string
@@ -289,6 +293,8 @@ interface FaceRecord {
   id: number
   name: string
   org_id?: string
+  org_name?: string
+  project_name?: string
   image_name: string
   image_path: string
   has_embedding: boolean
@@ -475,6 +481,8 @@ interface CameraRecord {
   rotate?: string
   organization?: string
   org_id?: string
+  org_name?: string
+  project_name?: string
   org_admin?: string
   deleted?: boolean
   created_at?: string
@@ -491,6 +499,8 @@ function toCamera(r: CameraRecord): Camera {
     rotate: r.rotate,
     organization: r.organization,
     orgId: r.org_id ?? r.organization,
+    orgName: r.org_name,
+    projectName: r.project_name,
     org_admin: r.org_admin,
     deleted: r.deleted,
     createdAt: r.created_at,

@@ -130,6 +130,8 @@ export interface Camera {
   organization?: string
   /** Cosmos organization identifier used as the tenant key. */
   orgId?: string
+  orgName?: string
+  projectName?: string
   org_admin?: string
   /** Soft-deleted cameras are hidden from normal camera lists. */
   deleted?: boolean
