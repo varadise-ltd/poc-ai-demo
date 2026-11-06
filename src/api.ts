@@ -9,7 +9,7 @@ import type { Alert, Camera, CameraAI, CameraModelRun, DashboardQueryResult, Fac
 const backendTarget = import.meta.env.VITE_BACKEND_TARGET?.trim().toLowerCase() === 'cloud' ? 'cloud' : 'local'
 export type BackendMode = 'local' | 'cloud'
 const BASE_URL: string = backendTarget === 'local'
-  ? (import.meta.env.VITE_LOCAL_API_BASE?.trim() || 'http://localhost:8000')
+  ? (import.meta.env.VITE_LOCAL_API_BASE?.trim() || 'https://internal-poc-aicctv-dev.varadise.cloud')
   : (import.meta.env.VITE_CLOUD_API_BASE?.trim() || '')
 
 export function getBackendMode(): BackendMode { return backendTarget }
@@ -97,7 +97,8 @@ export function apiBaseUrl(): string {
     // an internal backend hostname that the browser cannot reach directly.
     return window.location.origin
   }
-  return 'http://localhost:8000'
+  // 无浏览器上下文（SSR/测试）时与 cloud 同源语义一致：空 = 相对 /api。
+  return ''
 }
 
 /**
