@@ -13,6 +13,7 @@ const defaultDashboards: DashboardDefinition[] = [
   { id: 'ppe', title: 'PPE detection', subtitle: 'PPE detection' },
   { id: 'object', title: 'Human detection', subtitle: 'Human detections grouped by zone' },
   { id: 'segregation', title: 'Pedestrian / Vehicle', subtitle: 'Segregation' },
+  { id: 'smoking', title: 'Smoking Detection', subtitle: 'Confirmed smoking incidents' },
 ]
 
 const dashboards = ref<DashboardDefinition[]>(defaultDashboards)
@@ -69,6 +70,7 @@ const descriptions: Record<string, string> = {
   ppe: 'People not meeting PPE requirements, with per-violation detail.',
   object: 'Humans detected by the Human detection AI model, grouped by zone with per-detection detail.',
   segregation: 'People and vehicles detected by the Pedestrian / Vehicle Segregation AI model, with per-detection counts.',
+  smoking: 'Confirmed smoking incidents with per-event cigarette counts and evidence snapshots.',
 }
 let requestId = 0
 const people = computed(() => {
@@ -1028,7 +1030,7 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
                 <strong>{{ record.person_name || record.message }}</strong>
                 <span>{{ record.camera_id || 'External source' }} · {{ record.zone || record.gate_id || record.category }}</span>
               </div>
-              <span class="dash-tag" :class="record.status === 'unknown' || record.violations.length ? 'nomatch' : 'match'">{{ statusLabel(record) }}</span>
+              <span class="dash-tag" :class="record.status === 'unknown' || record.status === 'Smoking' || record.violations.length ? 'nomatch' : 'match'">{{ statusLabel(record) }}</span>
               <strong class="dashboard-confidence">{{ displayConfidence(record.confidence) }}</strong>
             </div>
             <div v-if="!visibleRecords.length" class="detail-empty">No records for the selected filters.</div>

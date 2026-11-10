@@ -80,6 +80,20 @@ export const scripts: Script[] = [
     ],
   },
   {
+    id: 'smoking',
+    name: 'Smoking Detection',
+    meta: 'Smoking · Cigarette · Alert',
+    loaded: true,
+    cameras: ['Site Entrance Camera', 'Warehouse Camera', 'Demo Camera'],
+    description: 'Detect people smoking cigarettes using a fine-tuned YOLO26s model with temporal confirmation.',
+    kpis: [
+      ['Smoking events', '0', 'Confirmed alerts'],
+      ['Cigarettes', '0', 'Current frame'],
+      ['Confidence', '0%', 'Average'],
+      ['Status', 'Clear', 'Monitored zone'],
+    ],
+  },
+  {
     id: 'traffic',
     name: 'Traffic Counting',
     meta: 'Vehicles · Pedestrians · Direction',
