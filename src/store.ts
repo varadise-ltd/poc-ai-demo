@@ -436,7 +436,9 @@ function alertToEvent(a: Alert): EventItem {
 
 export async function loadDetectionEvents(): Promise<void> {
   try {
-    const alerts = await api.listAlerts()
+    // 只拉当前选中 AI model 的事件：不带 script_id 时 /api/alerts 返回全量
+    // 最新 100 条（smoking + idle 高频事件会淹没岸桥的 pick_up/landing/job_done）。
+    const alerts = await api.listAlerts(store.selectedScriptId || undefined)
     store.detectionEvents = alerts.map(alertToEvent)
   } catch {
     // 忽略轮询错误，保留旧数据

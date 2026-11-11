@@ -834,8 +834,9 @@ export async function stopAllScripts(): Promise<void> {
   await handle(res)
 }
 
-export async function listAlerts(): Promise<Alert[]> {
-  const res = await request(`${BASE_URL}/api/alerts`)
+export async function listAlerts(scriptId?: string): Promise<Alert[]> {
+  const q = scriptId ? `?script_id=${encodeURIComponent(scriptId)}` : ''
+  const res = await request(`${BASE_URL}/api/alerts${q}`)
   return handle<Alert[]>(res)
 }
 
