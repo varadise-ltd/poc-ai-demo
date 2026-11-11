@@ -1316,14 +1316,70 @@ export function streamUrl(
     annotate: String(annotate),
     roi_overlay: String(roiOverlay),
     org_id: activeOrgId,
+    // <img> cannot send X-Project-Id, so pass the tenant scope in the query.
+    project_id: activeProjectId,
   })
   if (cacheBust !== undefined) q.set('stream_nonce', String(cacheBust))
   return `${BASE_URL}/api/stream?${q.toString()}`
 }
 
 export function snapshotUrl(camera: string, scriptId: string, annotate: boolean): string {
-  const q = new URLSearchParams({ camera, script_id: scriptId, annotate: String(annotate), org_id: activeOrgId })
+  const q = new URLSearchParams({ camera, script_id: scriptId, annotate: String(annotate), org_id: activeOrgId, project_id: activeProjectId })
   return `${BASE_URL}/api/stream/snapshot?${q.toString()}`
+}
+
+export interface StreamProbeResult {
+  ok: boolean
+  /** HTTP status; 0 when the request never reached the backend (network/CORS/timeout). */
+  status: number
+  /** Human-readable reason, taken from the backend `detail` when available. */
+  message: string
+}
+
+/**
+ * Diagnose a stream URL that an `<img>` failed to load.
+ *
+ * An `<img>` error event carries no status code or body, so the UI cannot tell
+ * "camera offline" from "403 wrong org" from "gateway timeout". This opens the
+ * same URL with fetch (with tenant headers), reads only the response headers
+ * (or the error body), then aborts so the MJPEG connection is not left open.
+ */
+export async function probeStream(url: string, timeoutMs = 8000): Promise<StreamProbeResult> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await request(url, { signal: controller.signal, cache: 'no-store' })
+    if (res.ok) {
+      const type = res.headers.get('content-type') ?? ''
+      controller.abort()
+      if (type && !/multipart|image\//i.test(type)) {
+        return { ok: false, status: res.status, message: `Unexpected stream content-type "${type}" (check the /api proxy route).` }
+      }
+      return { ok: true, status: res.status, message: '' }
+    }
+    let message = res.statusText || `HTTP ${res.status}`
+    try {
+      const text = await res.text()
+      try {
+        const body = JSON.parse(text) as { detail?: unknown; message?: unknown }
+        const detail = body.detail ?? body.message
+        if (typeof detail === 'string' && detail) message = detail
+        else if (detail) message = JSON.stringify(detail)
+      } catch {
+        if (text.trim() && text.length < 300) message = text.trim()
+      }
+    } catch { /* body unreadable */ }
+    return { ok: false, status: res.status, message }
+  } catch (err) {
+    const aborted = err instanceof DOMException && err.name === 'AbortError'
+    return {
+      ok: false,
+      status: 0,
+      message: aborted ? 'Stream did not respond in time.' : 'Cannot reach the stream endpoint (network error).',
+    }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export async function fetchTenantAsset(url: string): Promise<Response> {

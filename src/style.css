@@ -671,6 +671,23 @@ input[type='range'].param-range::-moz-range-thumb {
   border: 1px solid rgba(219, 230, 237, 0.22);
   font-size: 12px;
   pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 32px);
+  text-align: left;
+}
+
+.video-stream-status-error {
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fecaca;
+}
+
+.video-stream-retry {
+  pointer-events: auto;
+  flex: none;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .preview-roi-overlay {

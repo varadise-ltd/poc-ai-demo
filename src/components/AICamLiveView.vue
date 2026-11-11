@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchTenantAsset, getCraneJobs, getCraneLive, getFaceLive, getGateLive, getPickupBayLive, getPortOverview, getRoi, isNormalizedRoiPoints, snapshotUrl, streamUrl } from '../api'
+import { fetchTenantAsset, getCraneJobs, getCraneLive, getFaceLive, getGateLive, getPickupBayLive, getPortOverview, getRoi, isNormalizedRoiPoints, probeStream, snapshotUrl, streamUrl } from '../api'
 import type { CraneJob, CraneLiveInfo, FaceLiveInfo, GateLiveInfo, PickupBayLiveInfo, PortOverview, RoiPolygon } from '../api'
 import type { Camera, EventItem, Script } from '../types'
 import { formatDisplayConfidence } from '../confidence'
@@ -142,6 +142,11 @@ function onPreviewFrameLoad(event: Event): void {
   const image = event.target as HTMLImageElement
   streamHasFrame.value = true
   streamConnectionError.value = false
+  if (streamAttempt.value || streamErrorMessage.value) {
+    streamAttempt.value = 0
+    streamErrorMessage.value = ''
+  }
+  if (firstFrameTimer !== null) { window.clearTimeout(firstFrameTimer); firstFrameTimer = null }
   if (image.naturalWidth > 0 && image.naturalHeight > 0) {
     // 只有真实分辨率变化（例如断流重连到不同分辨率的源）才更新，避免每帧都
     // 改写尺寸从而触发 previewRoisPixel 重算。
@@ -155,13 +160,105 @@ function onPreviewFrameLoad(event: Event): void {
   }
 }
 
-function onPreviewFrameError(): void {
-  // Do not replace the image source here. Replacing it while the browser is
-  // reconnecting creates a reload loop and presents the whole video card as a
-  // black frame. The browser keeps the MJPEG connection state and the card
-  // background remains visible until the next valid frame arrives.
-  streamConnectionError.value = true
+// ---------------------------------------------------------------------------
+// Stream recovery
+// An <img> MJPEG request that errors (backend 4xx/5xx, dropped connection,
+// proxy timeout) is NOT retried by the browser — it stays dead forever. The old
+// handler only flipped a flag, so the card showed "Reconnecting…" indefinitely.
+// Now: probe the URL to learn why, then reconnect with backoff; stop retrying
+// on errors that will not fix themselves and show the reason + a Retry button.
+// ---------------------------------------------------------------------------
+const STREAM_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000]
+const STREAM_MAX_ATTEMPTS = 8
+const FIRST_FRAME_TIMEOUT_MS = 15000
+
+const streamAttempt = ref(0)
+const streamErrorMessage = ref('')
+const streamGaveUp = ref(false)
+let streamRetryTimer: number | null = null
+let firstFrameTimer: number | null = null
+let streamHandlingError = false
+
+function clearStreamTimers(): void {
+  if (streamRetryTimer !== null) { window.clearTimeout(streamRetryTimer); streamRetryTimer = null }
+  if (firstFrameTimer !== null) { window.clearTimeout(firstFrameTimer); firstFrameTimer = null }
 }
+
+function armFirstFrameWatchdog(): void {
+  if (firstFrameTimer !== null) window.clearTimeout(firstFrameTimer)
+  firstFrameTimer = window.setTimeout(() => {
+    firstFrameTimer = null
+    // Connection opened but no frame arrived (stalled worker / buffering proxy).
+    if (previewing.value && !streamHasFrame.value) void onPreviewFrameError()
+  }, FIRST_FRAME_TIMEOUT_MS)
+}
+
+/** Reset all recovery state and open a fresh stream connection. */
+function restartStream(): void {
+  clearStreamTimers()
+  streamHandlingError = false
+  streamAttempt.value = 0
+  streamErrorMessage.value = ''
+  streamGaveUp.value = false
+  streamHasFrame.value = false
+  streamConnectionError.value = false
+  streamEpoch.value += 1
+  if (previewing.value) armFirstFrameWatchdog()
+}
+
+function stopStreamRecovery(): void {
+  clearStreamTimers()
+  streamHandlingError = false
+}
+
+async function onPreviewFrameError(): Promise<void> {
+  if (!previewing.value || streamHandlingError || streamGaveUp.value) return
+  streamHandlingError = true
+  clearStreamTimers()
+  streamConnectionError.value = true
+  const epoch = streamEpoch.value
+  const url = currentStreamUrl.value
+  const probe = url ? await probeStream(url) : { ok: false, status: 0, message: 'No AI model selected.' }
+  // User switched camera/model or stopped preview while probing: discard.
+  if (!previewing.value || epoch !== streamEpoch.value) { streamHandlingError = false; return }
+
+  // 400/401/403/404/422 will not fix themselves by retrying (bad tenant, unknown
+  // camera/model, permission). 409/5xx/network/timeouts are usually transient.
+  const permanent = [400, 401, 403, 404, 422].includes(probe.status)
+  streamErrorMessage.value = probe.ok
+    ? 'Stream connection dropped.'
+    : `${probe.status ? `HTTP ${probe.status}: ` : ''}${probe.message}`
+  streamAttempt.value += 1
+  if (permanent || streamAttempt.value >= STREAM_MAX_ATTEMPTS) {
+    streamGaveUp.value = true
+    streamHandlingError = false
+    return
+  }
+  const delay = STREAM_RETRY_DELAYS_MS[Math.min(streamAttempt.value - 1, STREAM_RETRY_DELAYS_MS.length - 1)]
+  streamRetryTimer = window.setTimeout(() => {
+    streamRetryTimer = null
+    streamHandlingError = false
+    if (!previewing.value) return
+    // Bump the nonce only after the backoff delay — swapping src immediately is
+    // what caused the old black-frame reload loop.
+    streamHasFrame.value = false
+    streamEpoch.value += 1
+    armFirstFrameWatchdog()
+  }, delay)
+}
+
+function retryStreamNow(): void {
+  if (previewing.value) restartStream()
+}
+
+const streamStatusText = computed(() => {
+  if (streamGaveUp.value) return `Unable to load the stream. ${streamErrorMessage.value}`
+  if (streamConnectionError.value) {
+    const detail = streamErrorMessage.value ? ` (${streamErrorMessage.value})` : ''
+    return `Reconnecting to camera… attempt ${streamAttempt.value}/${STREAM_MAX_ATTEMPTS}${detail}`
+  }
+  return 'Connecting to camera…'
+})
 
 // 画面左下角显示当前预览的真实摄像机与分辨率（原先是写死的装饰文字）
 const selectedCameraLabel = computed(() => {
@@ -179,10 +276,9 @@ async function togglePreview(): Promise<void> {
   // 只在 AI model 页通过 Run/Stop 改变。停止中的 model 不可预览（按钮已禁用）。
   if (!previewing.value && !isRunning.value) return
   previewing.value = !previewing.value
+  if (!previewing.value) stopStreamRecovery()
   if (previewing.value) {
-    streamEpoch.value += 1
-    streamHasFrame.value = false
-    streamConnectionError.value = false
+    restartStream()
     await loadPreviewRoi()
     await loadPreviewHistory()
     void loadCraneJobs()
@@ -559,14 +655,12 @@ async function loadGateLive(): Promise<void> {
 }
 
 watch([() => store.selectedCamera, () => store.selectedScriptId], () => {
-  streamEpoch.value += 1
+  restartStream()
   gateLive.value = null
   faceLive.value = null
   craneLive.value = null
   craneJobs.value = []
   portOverview.value = null
-  streamHasFrame.value = false
-  streamConnectionError.value = false
   if (isRunning.value || isPortMonitoringRunning.value) {
     void loadGateLive()
     void loadFaceLive()
@@ -599,12 +693,18 @@ watch(isRunning, (running) => {
     portOverview.value = null
     // 模型已停止：预览随之关闭（停止中的 model 不可预览）。
     previewing.value = false
+    stopStreamRecovery()
   }
 })
 
 function togglePause(): void {
   store.previewPaused = !store.previewPaused
+  // Pause swaps the <img> to a snapshot URL (and back); start a clean attempt.
+  if (previewing.value) restartStream()
 }
+
+// Labels toggle changes the stream URL too; reset recovery state with it.
+watch(() => store.previewShowLabels, () => { if (previewing.value) restartStream() })
 
 function toggleLabels(): void {
   store.previewShowLabels = !store.previewShowLabels
@@ -647,6 +747,7 @@ onBeforeUnmount(() => {
   // 只停止轮询：worker 继续运行，回到本页后预览会自动恢复（与用户的
   // 「没有手动 Stop 就一直保持 running」预期一致）。
   stopPolling()
+  stopStreamRecovery()
 })
 </script>
 
@@ -734,8 +835,19 @@ onBeforeUnmount(() => {
               @load="onPreviewFrameLoad"
               @error="onPreviewFrameError"
             />
-            <div v-if="!streamHasFrame || streamConnectionError" class="video-stream-status" aria-live="polite">
-              {{ streamConnectionError ? 'Reconnecting to camera…' : 'Connecting to camera…' }}
+            <div
+              v-if="!streamHasFrame || streamConnectionError || streamGaveUp"
+              class="video-stream-status"
+              :class="{ 'video-stream-status-error': streamGaveUp }"
+              aria-live="polite"
+            >
+              <span>{{ streamStatusText }}</span>
+              <button
+                v-if="streamGaveUp || streamConnectionError"
+                type="button"
+                class="btn video-stream-retry"
+                @click="retryStreamNow"
+              >Retry now</button>
             </div>
             <svg
               v-if="previewRois.length"
