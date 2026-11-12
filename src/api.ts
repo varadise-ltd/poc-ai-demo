@@ -253,10 +253,17 @@ export async function listOrganizations(): Promise<OrganizationRecord[]> {
   return data.organizations ?? []
 }
 
-export async function listDashboards(): Promise<{ id: string; title: string; subtitle: string }[]> {
+export interface DashboardListResult {
+  /** 当前活动组织的租户键（稳定 id）。 */
+  org_id: string
+  /** 当前活动组织的显示名称（orgname）。 */
+  org_name: string
+  dashboards: { id: string; title: string; subtitle: string }[]
+}
+
+export async function listDashboards(): Promise<DashboardListResult> {
   const res = await request(`${BASE_URL}/api/dashboard`)
-  const data = await handle<{ dashboards: { id: string; title: string; subtitle: string }[] }>(res)
-  return data.dashboards ?? []
+  return handle<DashboardListResult>(res)
 }
 
 // Dashboard analytics (see /api/dashboard on the backend). The dashboard *list* is

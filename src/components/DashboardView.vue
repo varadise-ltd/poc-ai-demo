@@ -17,6 +17,7 @@ const defaultDashboards: DashboardDefinition[] = [
 ]
 
 const dashboards = ref<DashboardDefinition[]>(defaultDashboards)
+const orgName = ref('')
 const cameras = ref<Camera[]>([])
 const faceLibrary = ref<FaceData[]>([])
 const selectedId = ref('face')
@@ -261,8 +262,9 @@ onMounted(async () => {
   const [cameraResponse, facesResponse, dashboardResponse] = await Promise.allSettled([listCameras(), listFaces(), listDashboards()])
   if (cameraResponse.status === 'fulfilled') cameras.value = cameraResponse.value
   if (facesResponse.status === 'fulfilled') faceLibrary.value = facesResponse.value
-  if (dashboardResponse.status === 'fulfilled' && dashboardResponse.value.length) {
-    dashboards.value = dashboardResponse.value as DashboardDefinition[]
+  if (dashboardResponse.status === 'fulfilled' && dashboardResponse.value.dashboards.length) {
+    dashboards.value = dashboardResponse.value.dashboards as DashboardDefinition[]
+    orgName.value = dashboardResponse.value.org_name || store.activeOrgName || store.activeOrgId
     if (!dashboards.value.some((dashboard) => dashboard.id === selectedId.value)) {
       selectedId.value = dashboards.value[0].id
     }
@@ -276,8 +278,9 @@ watch(
     const [cameraResponse, facesResponse, dashboardResponse] = await Promise.allSettled([listCameras(), listFaces(), listDashboards()])
     if (cameraResponse.status === 'fulfilled') cameras.value = cameraResponse.value
     if (facesResponse.status === 'fulfilled') faceLibrary.value = facesResponse.value
-    if (dashboardResponse.status === 'fulfilled' && dashboardResponse.value.length) {
-      dashboards.value = dashboardResponse.value as DashboardDefinition[]
+    if (dashboardResponse.status === 'fulfilled' && dashboardResponse.value.dashboards.length) {
+      dashboards.value = dashboardResponse.value.dashboards as DashboardDefinition[]
+      orgName.value = dashboardResponse.value.org_name || store.activeOrgName || store.activeOrgId
       selectedId.value = dashboards.value.some((dashboard) => dashboard.id === selectedId.value)
         ? selectedId.value
         : dashboards.value[0].id
@@ -592,6 +595,7 @@ const craneCycleEvents = computed(() => (craneCycleMatch.value ? craneSessionEve
         <h1>Dashboards</h1>
         <p class="subtitle">Configurable analytics dashboards. Each AI model provides a dashboard template that is rendered by a shared engine.</p>
       </div>
+      <span v-if="orgName" class="pill">{{ orgName }}</span>
     </div>
 
     <div class="config-layout dashboard-layout">
