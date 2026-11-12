@@ -93,6 +93,7 @@ export const store = reactive({
   cameraEditorResolution: '1920 × 1080',
   cameraEditorRotate: '0°',
   cameraEditorOrgId: '',
+  cameraEditorOrgName: '',
   cameraEditorOrgAdmin: '',
   cameraEditorChanged: false,
   cameraEditorMode: 'edit' as 'add' | 'edit',
@@ -586,6 +587,7 @@ export async function updateCameraRecord(
     resolution?: string
     rotate?: string
     org_id?: string
+    org_name?: string
     org_admin?: string
   },
 ): Promise<void> {

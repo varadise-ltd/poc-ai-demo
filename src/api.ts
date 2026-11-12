@@ -593,6 +593,7 @@ export async function updateCamera(
     resolution?: string
     rotate?: string
     org_id?: string
+    org_name?: string
     org_admin?: string
   },
 ): Promise<Camera> {

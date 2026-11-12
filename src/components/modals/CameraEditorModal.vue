@@ -14,6 +14,7 @@ const rtmp = ref('')
 const resolution = ref('1920 × 1080')
 const rotate = ref('0°')
 const orgId = ref('')
+const orgName = ref('')
 const organizations = ref<OrganizationRecord[]>([])
 const organizationsLoading = ref(false)
 const orgAdmin = ref('')
@@ -34,6 +35,7 @@ const nameError = ref('')
 const resolutionError = ref('')
 const rotateError = ref('')
 const orgIdError = ref('')
+const orgNameError = ref('')
 const orgAdminError = ref('')
 
 async function loadOrganizations(): Promise<void> {
@@ -65,16 +67,22 @@ watch(
     resolutionError.value = ''
     rotateError.value = ''
     orgIdError.value = ''
+    orgNameError.value = ''
     orgAdminError.value = ''
     name.value = store.cameraEditorName
     rtmp.value = store.cameraEditorRtmp
     resolution.value = store.cameraEditorResolution
     rotate.value = store.cameraEditorRotate
     orgId.value = store.cameraEditorOrgId || store.activeOrgId
+    orgName.value = store.cameraEditorOrgName || store.activeOrgName || orgId.value
     orgAdmin.value = store.cameraEditorOrgAdmin
     await loadOrganizations()
     if (!organizations.value.some((org) => org.org_id === orgId.value)) {
       orgId.value = store.activeOrgId
+    }
+    const selected = organizations.value.find((org) => org.org_id === orgId.value)
+    if (selected && !store.cameraEditorOrgName) {
+      orgName.value = selected.org_name || orgId.value
     }
   },
 )
@@ -156,6 +164,25 @@ function validateOrgId(value: string): string | null {
   return null
 }
 
+function validateOrgName(value: string): string | null {
+  const v = value.trim()
+  if (!v) return 'Active Org Name is required.'
+  if (v.length > ORG_MAX) return `Active Org Name must be ${ORG_MAX} characters or fewer.`
+  return null
+}
+
+// 切换组织归属时，把显示名称同步为该组织的当前名称（用户可再编辑）。
+function onOrgIdChange(): void {
+  const selected = organizations.value.find((org) => org.org_id === orgId.value)
+  if (selected) orgName.value = selected.org_name || orgId.value
+  orgNameError.value = ''
+  if (orgIdError.value) orgIdError.value = validateOrgId(orgId.value) ?? ''
+}
+
+function onOrgNameInput(): void {
+  if (orgNameError.value) orgNameError.value = validateOrgName(orgName.value) ?? ''
+}
+
 // 后端探测：host 可达性 + 能否打开为视频流（读取一帧）
 async function validateStream(): Promise<boolean> {
   checking.value = true
@@ -226,12 +253,14 @@ async function save(): Promise<void> {
   resolutionError.value = validateResolution(resolution.value) ?? ''
   rotateError.value = validateRotate(rotate.value) ?? ''
   orgIdError.value = validateOrgId(orgId.value) ?? ''
+  orgNameError.value = validateOrgName(orgName.value) ?? ''
   orgAdminError.value = validateOrgAdmin(orgAdmin.value) ?? ''
   if (
     nameError.value ||
     resolutionError.value ||
     rotateError.value ||
     orgIdError.value ||
+    orgNameError.value ||
     orgAdminError.value
   ) {
     return
@@ -273,6 +302,7 @@ async function save(): Promise<void> {
         resolution: resolution.value,
         rotate: rotate.value,
         org_id: orgId.value.trim(),
+        org_name: orgName.value.trim(),
         org_admin: orgAdmin.value.trim(),
       })
     }
@@ -355,7 +385,7 @@ async function save(): Promise<void> {
               v-model="orgId"
               :disabled="organizationsLoading || !organizations.length"
               @input="onOrgIdInput"
-              @change="onOrgIdInput"
+              @change="onOrgIdChange"
             >
               <option v-if="organizationsLoading" value="">Loading organizations...</option>
               <option v-else-if="!organizations.length" value="">No organizations available</option>
@@ -364,6 +394,16 @@ async function save(): Promise<void> {
               </option>
             </select>
             <div v-if="orgIdError" class="rtmp-hint" style="color: var(--red)">{{ orgIdError }}</div>
+          </div>
+          <div class="field full">
+            <label>Active Org Name (display name)</label>
+            <input
+              v-model="orgName"
+              :class="{ invalid: !!orgNameError }"
+              placeholder="Organization display name"
+              @input="onOrgNameInput"
+            />
+            <div v-if="orgNameError" class="rtmp-hint" style="color: var(--red)">{{ orgNameError }}</div>
           </div>
           <div class="field full">
             <label>Organization admin</label>
