@@ -61,6 +61,44 @@ if (typeof window !== 'undefined') {
   if (URL_PROJECT_ID) window.localStorage.setItem(PROJECT_STORAGE_KEY, URL_PROJECT_ID)
 }
 
+// ---------------------------------------------------------------------------
+// Cosmos iframe → 前端 链路日志（[cosmos-chain]）
+// ---------------------------------------------------------------------------
+// 记录「母站 iframe 传入的 orgId/projectId → 前端解析出的 active org/project」
+// 全过程的每一个环节，便于在浏览器控制台按 [cosmos-chain] 过滤排查租户串号。
+// 每次 API 请求另发一行 [cosmos-chain]，携带 X-Request-ID 与后端日志串起同一条
+// 请求链（后端 RequestLoggingMiddleware 沿用该 X-Request-ID）。
+const CHAIN_TAG = '[cosmos-chain]'
+
+/** 生成一个贯穿「前端 → 后端」的请求 id（后端沿用 X-Request-ID）。 */
+function newChainRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2)
+}
+
+function chainLog(message: string, detail?: unknown): void {
+  if (typeof console === 'undefined') return
+  console.info(`${CHAIN_TAG} ${message}`, detail ?? '')
+}
+
+// 模块加载即打印一次「租户初始化」快照：iframe URL 原始参数、localStorage 缓存、
+// 最终解析出的 active org/project，四者并排，一眼看出租户值从何而来。
+if (typeof window !== 'undefined') {
+  chainLog('tenant init', {
+    backendTarget,
+    urlOrgId: URL_ORG_ID ?? null,
+    urlProjectId: URL_PROJECT_ID ?? null,
+    storedOrgId: window.localStorage.getItem(ORG_STORAGE_KEY) ?? null,
+    storedProjectId: window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? null,
+    activeOrgId,
+    activeProjectId,
+    defaultOrgId: DEFAULT_ORG_ID,
+    defaultProjectId: DEFAULT_PROJECT_ID,
+  })
+}
+
 export function getActiveOrgId(): string {
   return activeOrgId
 }
@@ -77,15 +115,24 @@ export function setActiveProjectId(projectId: string): void {
   if (typeof window !== 'undefined') window.localStorage.setItem(PROJECT_STORAGE_KEY, activeProjectId)
 }
 
-function requestInit(init: RequestInit = {}): RequestInit {
+function requestInit(init: RequestInit = {}, requestId?: string): RequestInit {
   const headers = new Headers(init.headers)
   headers.set('X-Organization-Id', activeOrgId)
   headers.set('X-Project-Id', activeProjectId)
+  if (requestId) headers.set('X-Request-ID', requestId)
   return { ...init, headers }
 }
 
 async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return fetch(input, requestInit(init))
+  const requestId = newChainRequestId()
+  const finalInit = requestInit(init, requestId)
+  const method = finalInit.method || 'GET'
+  const url = typeof input === 'string'
+    ? input
+    : (input instanceof URL ? input.toString() : input.url)
+  // 每条请求一行链路日志：request id、方法、URL 与本次携带的租户头。
+  chainLog(`req=${requestId} ${method} ${url} org=${activeOrgId} project=${activeProjectId}`)
+  return fetch(input, finalInit)
 }
 
 /** Absolute backend base URL currently in use (shown in error messages). */

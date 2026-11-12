@@ -24,21 +24,28 @@ async function loadTenantContext(): Promise<void> {
     const synced = await syncTenantContext(store.activeOrgId, store.projectId)
     store.activeOrgName = synced.organization?.org_name || store.activeOrgId
     store.activeProjectName = synced.project?.project_name || store.projectId
-    return
   } catch {
     // profile-service 不可用 → 回退本地 records。
+    try {
+      const [org, selectedProject] = await Promise.all([
+        getOrganization(store.activeOrgId),
+        getProject(store.projectId),
+      ])
+      store.activeOrgName = org.org_name || store.activeOrgId
+      store.activeProjectName = selectedProject.project_name || store.projectId
+    } catch {
+      store.activeOrgName = store.activeOrgId
+      store.activeProjectName = store.projectId
+    }
   }
-  try {
-    const [org, selectedProject] = await Promise.all([
-      getOrganization(store.activeOrgId),
-      getProject(store.projectId),
-    ])
-    store.activeOrgName = org.org_name || store.activeOrgId
-    store.activeProjectName = selectedProject.project_name || store.projectId
-  } catch {
-    store.activeOrgName = store.activeOrgId
-    store.activeProjectName = store.projectId
-  }
+  // 链路日志：租户名称解析结果（链路的末端「得到相应信息」）。与 api.ts 的
+  // [cosmos-chain] init/req 日志、后端「tenant scope resolved」日志串成完整链路。
+  console.info('[cosmos-chain] tenant name resolved', {
+    orgId: store.activeOrgId,
+    projectId: store.projectId,
+    orgName: store.activeOrgName,
+    projectName: store.activeProjectName,
+  })
 }
 
 function toggleFullscreen(): void {
