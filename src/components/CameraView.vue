@@ -161,6 +161,7 @@ function openCameraEditor(cam: Camera): void {
   store.cameraEditorRotate = cam.rotate ?? '0°'
   store.cameraEditorOrgId = cam.orgId ?? cam.organization ?? store.activeOrgId
   store.cameraEditorOrgName = cam.orgName ?? store.activeOrgName ?? cam.orgId ?? store.activeOrgId
+  store.cameraEditorProjectId = cam.projectId ?? ''
   store.cameraEditorOrgAdmin = cam.org_admin ?? ''
   store.cameraEditorChanged = false
   store.showCameraEditor = true
@@ -176,6 +177,7 @@ function addCamera(): void {
   store.cameraEditorRotate = '0°'
   store.cameraEditorOrgId = store.activeOrgId
   store.cameraEditorOrgName = store.activeOrgName || store.activeOrgId
+  store.cameraEditorProjectId = store.projectId || ''
   store.cameraEditorOrgAdmin = ''
   store.cameraEditorChanged = false
   store.showCameraEditor = true

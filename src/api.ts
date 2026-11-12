@@ -30,7 +30,9 @@ export async function getInferenceDevice(): Promise<InferenceDeviceInfo> {
 
 const ORG_STORAGE_KEY = 'cosmos.activeOrgId'
 const PROJECT_STORAGE_KEY = 'cosmos.activeProjectId'
-const DEFAULT_ORG_ID = import.meta.env.VITE_DEFAULT_ORG_ID || 'default'
+// 本地租户：`Varadise` 是 poc-ai-service 内部自建的组织（非 Cosmos iframe 传入），
+// 作为前端默认租户键。需要改默认时用 VITE_DEFAULT_ORG_ID 覆盖。
+const DEFAULT_ORG_ID = import.meta.env.VITE_DEFAULT_ORG_ID || 'Varadise'
 const DEFAULT_PROJECT_ID = import.meta.env.VITE_DEFAULT_PROJECT_ID || 'default'
 
 function urlContext(name: string): string | null {
@@ -39,27 +41,24 @@ function urlContext(name: string): string | null {
   return params.get(name) || params.get(name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`))
 }
 
-// Cosmos iframe/deep-link context has priority over an old browser selection.
-// The values are persisted after initialization so refreshes remain scoped.
-// Cosmos only passes the ids; the org/project **names** are resolved by the
-// backend (poc-ai-service) through profile-service, not by the browser.
+// iframe 传入的 orgId / projectId **仅用于链路日志记录**，不再覆盖本地租户键。
+// 本地 `Varadise` 是主租户：前端忽略 iframe 的 orgId，直接以 Varadise（或用户在
+// UI 里手动选择的 org）作为 X-Organization-Id，保证本地摄像机能正常列出 / Run /
+// Save。若 iframe 传了其他 Cosmos org（如 React Ltd），用户仍可在 UI 手动切 org
+// 去查对应数据（本地 Varadise 的摄像机此时不可见，属预期）。
 const URL_ORG_ID = (urlContext('orgId') || urlContext('porgId'))?.trim()
 const URL_PROJECT_ID = urlContext('projectId')?.trim()
 
 /** Active tenant used by all API calls. The backend remains the authority. */
 let activeOrgId = (() => {
   if (typeof window === 'undefined') return DEFAULT_ORG_ID
-  return URL_ORG_ID || window.localStorage.getItem(ORG_STORAGE_KEY)?.trim() || DEFAULT_ORG_ID
+  // 优先级：用户手动选择（localStorage）> 本地默认 Varadise。iframe orgId 被忽略。
+  return window.localStorage.getItem(ORG_STORAGE_KEY)?.trim() || DEFAULT_ORG_ID
 })()
 let activeProjectId = (() => {
   if (typeof window === 'undefined') return DEFAULT_PROJECT_ID
-  return URL_PROJECT_ID || window.localStorage.getItem(PROJECT_STORAGE_KEY)?.trim() || DEFAULT_PROJECT_ID
+  return window.localStorage.getItem(PROJECT_STORAGE_KEY)?.trim() || DEFAULT_PROJECT_ID
 })()
-
-if (typeof window !== 'undefined') {
-  if (URL_ORG_ID) window.localStorage.setItem(ORG_STORAGE_KEY, URL_ORG_ID)
-  if (URL_PROJECT_ID) window.localStorage.setItem(PROJECT_STORAGE_KEY, URL_PROJECT_ID)
-}
 
 // ---------------------------------------------------------------------------
 // Cosmos iframe → 前端 链路日志（[cosmos-chain]）
@@ -574,12 +573,13 @@ export async function createCamera(
   resolution?: string,
   rotate?: string,
   org_admin?: string,
+  project_id?: string,
 ): Promise<Camera> {
   console.log(`[api] createCamera name=${name} status=${status} rtmp=${redactUrl(rtmp)}`)
   const res = await request(`${BASE_URL}/api/cameras`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, rtmp, status, resolution, rotate, org_admin }),
+      body: JSON.stringify({ name, rtmp, status, resolution, rotate, org_admin, project_id }),
   })
   return toCamera(await handle<CameraRecord>(res))
 }
@@ -595,6 +595,7 @@ export async function updateCamera(
     org_id?: string
     org_name?: string
     org_admin?: string
+    project_id?: string
   },
 ): Promise<Camera> {
   console.log(`[api] updateCamera id=${id} fields=${JSON.stringify({ ...fields, rtmp: fields.rtmp ? redactUrl(fields.rtmp) : undefined })}`)

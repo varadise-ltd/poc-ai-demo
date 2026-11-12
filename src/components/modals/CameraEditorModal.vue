@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { apiBaseUrl, listOrganizations, probeCamera, type CameraProbeResult, type OrganizationRecord } from '../../api'
+import { apiBaseUrl, listOrganizations, listProjects, probeCamera, type CameraProbeResult, type OrganizationRecord, type ProjectRecord } from '../../api'
 import { addCameraRecord, store, updateCameraRecord } from '../../store'
 
 const isAddMode = computed(() => store.cameraEditorMode === 'add')
@@ -15,8 +15,11 @@ const resolution = ref('1920 × 1080')
 const rotate = ref('0°')
 const orgId = ref('')
 const orgName = ref('')
+const projectId = ref('')
 const organizations = ref<OrganizationRecord[]>([])
 const organizationsLoading = ref(false)
+const projects = ref<ProjectRecord[]>([])
+const projectsLoading = ref(false)
 const orgAdmin = ref('')
 const saving = ref(false)
 const error = ref('')
@@ -36,6 +39,7 @@ const resolutionError = ref('')
 const rotateError = ref('')
 const orgIdError = ref('')
 const orgNameError = ref('')
+const projectIdError = ref('')
 const orgAdminError = ref('')
 
 async function loadOrganizations(): Promise<void> {
@@ -46,6 +50,17 @@ async function loadOrganizations(): Promise<void> {
     organizations.value = []
   } finally {
     organizationsLoading.value = false
+  }
+}
+
+async function loadProjects(orgIdValue: string): Promise<void> {
+  projectsLoading.value = true
+  try {
+    projects.value = orgIdValue ? await listProjects(orgIdValue) : []
+  } catch {
+    projects.value = []
+  } finally {
+    projectsLoading.value = false
   }
 }
 
@@ -68,6 +83,7 @@ watch(
     rotateError.value = ''
     orgIdError.value = ''
     orgNameError.value = ''
+    projectIdError.value = ''
     orgAdminError.value = ''
     name.value = store.cameraEditorName
     rtmp.value = store.cameraEditorRtmp
@@ -75,6 +91,7 @@ watch(
     rotate.value = store.cameraEditorRotate
     orgId.value = store.cameraEditorOrgId || store.activeOrgId
     orgName.value = store.cameraEditorOrgName || store.activeOrgName || orgId.value
+    projectId.value = store.cameraEditorProjectId || ''
     orgAdmin.value = store.cameraEditorOrgAdmin
     await loadOrganizations()
     if (!organizations.value.some((org) => org.org_id === orgId.value)) {
@@ -84,6 +101,7 @@ watch(
     if (selected && !store.cameraEditorOrgName) {
       orgName.value = selected.org_name || orgId.value
     }
+    await loadProjects(orgId.value)
   },
 )
 
@@ -171,16 +189,32 @@ function validateOrgName(value: string): string | null {
   return null
 }
 
-// 切换组织归属时，把显示名称同步为该组织的当前名称（用户可再编辑）。
+function validateProjectId(value: string): string | null {
+  // project 是**可选**字段：空值表示「未分配项目」，不阻断保存；只有选了非空
+  // 值却不在当前组织的项目列表里时才报错。
+  const v = value.trim()
+  if (!v) return null
+  if (!projects.value.some((p) => p.project_id === v)) return 'Select a project from the backend list.'
+  return null
+}
+
+// 切换组织归属时，把显示名称同步为该组织的当前名称，并重载该组织的 project 列表。
 function onOrgIdChange(): void {
   const selected = organizations.value.find((org) => org.org_id === orgId.value)
   if (selected) orgName.value = selected.org_name || orgId.value
   orgNameError.value = ''
   if (orgIdError.value) orgIdError.value = validateOrgId(orgId.value) ?? ''
+  projectId.value = ''
+  projectIdError.value = ''
+  void loadProjects(orgId.value)
 }
 
 function onOrgNameInput(): void {
   if (orgNameError.value) orgNameError.value = validateOrgName(orgName.value) ?? ''
+}
+
+function onProjectIdInput(): void {
+  if (projectIdError.value) projectIdError.value = validateProjectId(projectId.value) ?? ''
 }
 
 // 后端探测：host 可达性 + 能否打开为视频流（读取一帧）
@@ -254,6 +288,7 @@ async function save(): Promise<void> {
   rotateError.value = validateRotate(rotate.value) ?? ''
   orgIdError.value = validateOrgId(orgId.value) ?? ''
   orgNameError.value = validateOrgName(orgName.value) ?? ''
+  projectIdError.value = validateProjectId(projectId.value) ?? ''
   orgAdminError.value = validateOrgAdmin(orgAdmin.value) ?? ''
   if (
     nameError.value ||
@@ -261,6 +296,7 @@ async function save(): Promise<void> {
     rotateError.value ||
     orgIdError.value ||
     orgNameError.value ||
+    projectIdError.value ||
     orgAdminError.value
   ) {
     return
@@ -283,6 +319,8 @@ async function save(): Promise<void> {
   }
 
   const trimmed = name.value.trim()
+  // project 可选：空值不传该字段（edit 保留原值；add 用后端默认/当前项目）。
+  const selectedProject = projectId.value.trim()
   saving.value = true
   try {
     console.log(`[Camera] save camera name=${trimmed} mode=${isAddMode.value ? 'add' : 'edit'}`)
@@ -294,6 +332,7 @@ async function save(): Promise<void> {
         resolution.value,
         rotate.value,
         orgAdmin.value.trim(),
+        selectedProject || undefined,
       )
     } else if (store.cameraEditorId !== null) {
       await updateCameraRecord(store.cameraEditorId, {
@@ -304,6 +343,7 @@ async function save(): Promise<void> {
         org_id: orgId.value.trim(),
         org_name: orgName.value.trim(),
         org_admin: orgAdmin.value.trim(),
+        project_id: selectedProject || undefined,
       })
     }
     store.showCameraEditor = false
@@ -394,6 +434,22 @@ async function save(): Promise<void> {
               </option>
             </select>
             <div v-if="orgIdError" class="rtmp-hint" style="color: var(--red)">{{ orgIdError }}</div>
+          </div>
+          <div class="field full">
+            <label>Project (optional)</label>
+            <select
+              v-model="projectId"
+              :disabled="projectsLoading"
+              @input="onProjectIdInput"
+              @change="onProjectIdInput"
+            >
+              <option value="">No project (optional)</option>
+              <option v-if="projectsLoading" value="">Loading projects...</option>
+              <option v-for="proj in projects" :key="proj.project_id" :value="proj.project_id">
+                {{ proj.project_name || proj.project_id }}
+              </option>
+            </select>
+            <div v-if="projectIdError" class="rtmp-hint" style="color: var(--red)">{{ projectIdError }}</div>
           </div>
           <div class="field full">
             <label>Active Org Name (display name)</label>

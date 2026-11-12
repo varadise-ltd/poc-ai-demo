@@ -94,6 +94,7 @@ export const store = reactive({
   cameraEditorRotate: '0°',
   cameraEditorOrgId: '',
   cameraEditorOrgName: '',
+  cameraEditorProjectId: '',
   cameraEditorOrgAdmin: '',
   cameraEditorChanged: false,
   cameraEditorMode: 'edit' as 'add' | 'edit',
@@ -565,8 +566,9 @@ export async function addCameraRecord(
   resolution?: string,
   rotate?: string,
   org_admin?: string,
+  project_id?: string,
 ): Promise<void> {
-  const cam = await api.createCamera(name, rtmp, status, resolution, rotate, org_admin)
+  const cam = await api.createCamera(name, rtmp, status, resolution, rotate, org_admin, project_id)
   store.cameras.push(cam)
   syncCameraMaps()
 }
@@ -589,6 +591,7 @@ export async function updateCameraRecord(
     org_id?: string
     org_name?: string
     org_admin?: string
+    project_id?: string
   },
 ): Promise<void> {
   const previous = store.cameras.find((c) => c.id === id)
