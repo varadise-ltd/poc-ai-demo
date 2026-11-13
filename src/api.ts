@@ -30,8 +30,7 @@ export async function getInferenceDevice(): Promise<InferenceDeviceInfo> {
 
 const ORG_STORAGE_KEY = 'cosmos.activeOrgId'
 const PROJECT_STORAGE_KEY = 'cosmos.activeProjectId'
-// 本地租户：`Varadise` 是 poc-ai-service 内部自建的组织（非 Cosmos iframe 传入），
-// 作为前端默认租户键。需要改默认时用 VITE_DEFAULT_ORG_ID 覆盖。
+// 无 iframe 且无本地缓存时的兜底租户键（本地自建 `Varadise`）。
 const DEFAULT_ORG_ID = import.meta.env.VITE_DEFAULT_ORG_ID || 'Varadise'
 const DEFAULT_PROJECT_ID = import.meta.env.VITE_DEFAULT_PROJECT_ID || 'default'
 
@@ -41,24 +40,29 @@ function urlContext(name: string): string | null {
   return params.get(name) || params.get(name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`))
 }
 
-// iframe 传入的 orgId / projectId **仅用于链路日志记录**，不再覆盖本地租户键。
-// 本地 `Varadise` 是主租户：前端忽略 iframe 的 orgId，直接以 Varadise（或用户在
-// UI 里手动选择的 org）作为 X-Organization-Id，保证本地摄像机能正常列出 / Run /
-// Save。若 iframe 传了其他 Cosmos org（如 React Ltd），用户仍可在 UI 手动切 org
-// 去查对应数据（本地 Varadise 的摄像机此时不可见，属预期）。
+// Cosmos iframe 传入的 orgId / projectId 作为**页面初始化的租户键**（优先于
+// 旧缓存与默认值）。后端会在启动期把 profile-service 全量 org sync 到本地库，
+// 因此前端能把 UUID orgId 解析为 orgname 展示（如 React Ltd），preview /
+// Dashboard / Camera / AI model 页面都初始化为该 org。
 const URL_ORG_ID = (urlContext('orgId') || urlContext('porgId'))?.trim()
 const URL_PROJECT_ID = urlContext('projectId')?.trim()
 
 /** Active tenant used by all API calls. The backend remains the authority. */
 let activeOrgId = (() => {
   if (typeof window === 'undefined') return DEFAULT_ORG_ID
-  // 优先级：用户手动选择（localStorage）> 本地默认 Varadise。iframe orgId 被忽略。
-  return window.localStorage.getItem(ORG_STORAGE_KEY)?.trim() || DEFAULT_ORG_ID
+  // 优先级：iframe orgId > 用户手动选择（localStorage）> 默认 Varadise。
+  return URL_ORG_ID || window.localStorage.getItem(ORG_STORAGE_KEY)?.trim() || DEFAULT_ORG_ID
 })()
 let activeProjectId = (() => {
   if (typeof window === 'undefined') return DEFAULT_PROJECT_ID
-  return window.localStorage.getItem(PROJECT_STORAGE_KEY)?.trim() || DEFAULT_PROJECT_ID
+  return URL_PROJECT_ID || window.localStorage.getItem(PROJECT_STORAGE_KEY)?.trim() || DEFAULT_PROJECT_ID
 })()
+
+// 把 iframe 传入的租户持久化，保证刷新后仍保持该租户范围。
+if (typeof window !== 'undefined') {
+  if (URL_ORG_ID) window.localStorage.setItem(ORG_STORAGE_KEY, URL_ORG_ID)
+  if (URL_PROJECT_ID) window.localStorage.setItem(PROJECT_STORAGE_KEY, URL_PROJECT_ID)
+}
 
 // ---------------------------------------------------------------------------
 // Cosmos iframe → 前端 链路日志（[cosmos-chain]）
