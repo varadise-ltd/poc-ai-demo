@@ -204,7 +204,7 @@ async function loadScriptOrganizations(): Promise<void> {
     if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
       organizations.unshift({
         org_id: store.activeOrgId,
-        org_name: store.activeOrgName || store.activeOrgId,
+        org_name: store.activeOrgName || '',
         source: 'local',
         status: 'active',
       })
@@ -213,7 +213,7 @@ async function loadScriptOrganizations(): Promise<void> {
   } catch {
     scriptOrganizations.value = [{
       org_id: store.activeOrgId,
-      org_name: store.activeOrgName || store.activeOrgId,
+      org_name: store.activeOrgName || '',
       source: 'local',
       status: 'active',
     }]

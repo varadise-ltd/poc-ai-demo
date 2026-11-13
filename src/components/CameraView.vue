@@ -38,7 +38,7 @@ async function loadCameraOrganizations(): Promise<void> {
     if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
       organizations.unshift({
         org_id: store.activeOrgId,
-        org_name: store.activeOrgName || store.activeOrgId,
+        org_name: store.activeOrgName || '',
         source: 'local',
         status: 'active',
       })
@@ -47,7 +47,7 @@ async function loadCameraOrganizations(): Promise<void> {
   } catch {
     cameraOrganizations.value = [{
       org_id: store.activeOrgId,
-      org_name: store.activeOrgName || store.activeOrgId,
+      org_name: store.activeOrgName || '',
       source: 'local',
       status: 'active',
     }]
@@ -160,7 +160,7 @@ function openCameraEditor(cam: Camera): void {
   store.cameraEditorResolution = cam.resolution ?? '1920 × 1080'
   store.cameraEditorRotate = cam.rotate ?? '0°'
   store.cameraEditorOrgId = cam.orgId ?? cam.organization ?? store.activeOrgId
-  store.cameraEditorOrgName = cam.orgName ?? store.activeOrgName ?? cam.orgId ?? store.activeOrgId
+  store.cameraEditorOrgName = cam.orgName ?? store.activeOrgName ?? ''
   store.cameraEditorProjectId = cam.projectId ?? ''
   store.cameraEditorOrgAdmin = cam.org_admin ?? ''
   store.cameraEditorChanged = false
@@ -176,7 +176,7 @@ function addCamera(): void {
   store.cameraEditorResolution = '1920 × 1080'
   store.cameraEditorRotate = '0°'
   store.cameraEditorOrgId = store.activeOrgId
-  store.cameraEditorOrgName = store.activeOrgName || store.activeOrgId
+  store.cameraEditorOrgName = store.activeOrgName || ''
   store.cameraEditorProjectId = store.projectId || ''
   store.cameraEditorOrgAdmin = ''
   store.cameraEditorChanged = false

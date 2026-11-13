@@ -33,6 +33,10 @@ const PROJECT_STORAGE_KEY = 'cosmos.activeProjectId'
 // 无 iframe 且无本地缓存时的兜底租户键（本地自建 `Varadise`）。
 const DEFAULT_ORG_ID = import.meta.env.VITE_DEFAULT_ORG_ID || 'Varadise'
 const DEFAULT_PROJECT_ID = import.meta.env.VITE_DEFAULT_PROJECT_ID || 'default'
+// 展示层的默认明文名称：无法从 profile-service 解析出 orgname/projectname 时，
+// 用这个默认名代替 orgid/projectid 展示，**绝不**在 UI 上直接显示 UUID。
+const DEFAULT_ORG_NAME = import.meta.env.VITE_DEFAULT_ORG_NAME || 'Varadise'
+const DEFAULT_PROJECT_NAME = import.meta.env.VITE_DEFAULT_PROJECT_NAME || 'Default'
 
 function urlContext(name: string): string | null {
   if (typeof window === 'undefined') return null
@@ -105,6 +109,12 @@ if (typeof window !== 'undefined') {
 export function getActiveOrgId(): string {
   return activeOrgId
 }
+
+/** 展示用默认组织名（orgname 解析失败时的兜底明文名，非 UUID）。 */
+export function getDefaultOrgName(): string { return DEFAULT_ORG_NAME }
+
+/** 展示用默认项目名（projectname 解析失败时的兜底明文名）。 */
+export function getDefaultProjectName(): string { return DEFAULT_PROJECT_NAME }
 
 export function setActiveOrgId(orgId: string): void {
   activeOrgId = orgId.trim() || DEFAULT_ORG_ID
@@ -1454,12 +1464,17 @@ export async function fetchTenantAsset(url: string): Promise<Response> {
 /**
  * Create a custom AI model. The backend clones the detector wiring of
  * `base_script_id` (a built-in scenario), so it is required.
+ *
+ * `orgIds` allows a model to belong to MULTIPLE organizations (multi-org);
+ * `camera` optionally assigns the new model to one camera immediately.
  */
 export async function createScript(fields: {
   name: string
   base_script_id: string
   description?: string
   scenario?: string
+  org_ids?: string[]
+  camera?: string
 }): Promise<Script> {
   const res = await request(`${BASE_URL}/api/scripts`, {
     method: 'POST',

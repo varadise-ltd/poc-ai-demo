@@ -767,7 +767,7 @@ onBeforeUnmount(() => {
     <div class="toolbar live-toolbar">
       <div class="field">
         <label for="live-organization">1 · Organization</label>
-        <input id="live-organization" :value="store.activeOrgName || store.activeOrgId" readonly />
+        <input id="live-organization" :value="store.activeOrgName || 'Loading…'" readonly />
       </div>
       <div class="field">
         <label for="live-camera">2 · Select camera</label>

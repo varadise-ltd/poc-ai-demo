@@ -90,7 +90,7 @@ watch(
     resolution.value = store.cameraEditorResolution
     rotate.value = store.cameraEditorRotate
     orgId.value = store.cameraEditorOrgId || store.activeOrgId
-    orgName.value = store.cameraEditorOrgName || store.activeOrgName || orgId.value
+    orgName.value = store.cameraEditorOrgName || store.activeOrgName || ''
     projectId.value = store.cameraEditorProjectId || ''
     orgAdmin.value = store.cameraEditorOrgAdmin
     await loadOrganizations()
@@ -99,7 +99,7 @@ watch(
     }
     const selected = organizations.value.find((org) => org.org_id === orgId.value)
     if (selected && !store.cameraEditorOrgName) {
-      orgName.value = selected.org_name || orgId.value
+      orgName.value = selected.org_name || ''
     }
     await loadProjects(orgId.value)
   },
@@ -201,7 +201,7 @@ function validateProjectId(value: string): string | null {
 // 切换组织归属时，把显示名称同步为该组织的当前名称，并重载该组织的 project 列表。
 function onOrgIdChange(): void {
   const selected = organizations.value.find((org) => org.org_id === orgId.value)
-  if (selected) orgName.value = selected.org_name || orgId.value
+  if (selected) orgName.value = selected.org_name || ''
   orgNameError.value = ''
   if (orgIdError.value) orgIdError.value = validateOrgId(orgId.value) ?? ''
   projectId.value = ''

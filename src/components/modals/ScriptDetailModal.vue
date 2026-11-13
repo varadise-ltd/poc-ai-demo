@@ -5,8 +5,8 @@ import {
   store,
   updateScriptMetaRecord,
 } from '../../store'
-import { getOrganization } from '../../api'
-import type { Script } from '../../types'
+import { getOrganization, listCameras, listOrganizations, type OrganizationRecord } from '../../api'
+import type { Camera, Script } from '../../types'
 
 const isAddMode = computed(() => store.scriptDetailMode === 'add')
 
@@ -19,6 +19,50 @@ const hasParams = computed(() => !!script.value?.params?.length)
 const organizationName = ref('')
 const scenario = ref('')
 
+// ADD 模式：一个 AI model 可同时归属多个组织（多选），并可指派到一台摄像机。
+const organizations = ref<OrganizationRecord[]>([])
+const selectedOrgIds = ref<string[]>([])
+const cameras = ref<Camera[]>([])
+const camerasLoading = ref(false)
+const selectedCamera = ref('')
+
+async function loadOrganizations(): Promise<void> {
+  try {
+    organizations.value = (await listOrganizations()).filter((org) => org.status === 'active')
+  } catch {
+    organizations.value = []
+  }
+}
+
+async function loadCamerasForSelectedOrgs(): Promise<void> {
+  camerasLoading.value = true
+  try {
+    if (!selectedOrgIds.value.length) {
+      cameras.value = []
+      return
+    }
+    // 合并所有选中组织下的摄像机（camera 只属于一个 org）。
+    const results = await Promise.all(selectedOrgIds.value.map((orgId) => listCameras(undefined, orgId)))
+    const seen = new Map<string, Camera>()
+    for (const batch of results) {
+      for (const cam of batch) seen.set(cam.id, cam)
+    }
+    cameras.value = [...seen.values()]
+  } catch {
+    cameras.value = []
+  } finally {
+    camerasLoading.value = false
+  }
+}
+
+function toggleOrg(orgId: string): void {
+  const idx = selectedOrgIds.value.indexOf(orgId)
+  if (idx >= 0) selectedOrgIds.value.splice(idx, 1)
+  else selectedOrgIds.value.push(orgId)
+  selectedCamera.value = ''
+  void loadCamerasForSelectedOrgs()
+}
+
 watch(
   () => [store.showScriptDetail, script.value?.id],
   () => {
@@ -27,6 +71,11 @@ watch(
       getOrganization(store.activeOrgId).then((org) => { organizationName.value = org.org_name }).catch(() => {})
     }
     scenario.value = script.value?.scenario ?? ''
+    if (isAddMode.value) {
+      selectedOrgIds.value = store.activeOrgId ? [store.activeOrgId] : []
+      selectedCamera.value = ''
+      void loadOrganizations().then(loadCamerasForSelectedOrgs)
+    }
   },
   { immediate: true },
 )
@@ -90,6 +139,8 @@ function saveScript(): void {
       baseScriptId: baseScriptId.value,
       description: store.newScriptDescription,
       scenario: scenario.value.trim(),
+      orgIds: selectedOrgIds.value,
+      camera: selectedCamera.value || undefined,
     })
       .then((script) => {
         store.scriptDetailMode = 'edit'
@@ -141,9 +192,36 @@ function saveScript(): void {
                 Detector type, model, classes and detection parameters are inherited from this built-in AI model.
               </span>
             </div>
-            <div class="field">
+            <div v-if="isAddMode" class="field full">
+              <label>Organizations (multi-select, one model → many orgs)</label>
+              <div class="org-multi-select">
+                <label v-for="org in organizations" :key="org.org_id" class="org-multi-option">
+                  <input
+                    type="checkbox"
+                    :checked="selectedOrgIds.includes(org.org_id)"
+                    @change="toggleOrg(org.org_id)"
+                  />
+                  <span>{{ org.org_name || org.org_id }}</span>
+                </label>
+                <span v-if="!organizations.length" class="subtitle">No organizations available</span>
+              </div>
+              <span class="subtitle">An AI model may belong to multiple organizations; each camera belongs to exactly one.</span>
+            </div>
+            <div v-else class="field">
               <label>Organization (owner tenant)</label>
-              <input :value="organizationName || store.activeOrgId" readonly />
+              <input :value="organizationName || ''" readonly />
+            </div>
+            <div v-if="isAddMode" class="field full">
+              <label>Assign to camera (optional)</label>
+              <select v-model="selectedCamera" :disabled="camerasLoading || !cameras.length">
+                <option value="">No camera (assign later)</option>
+                <option v-for="cam in cameras" :key="cam.id" :value="cam.name">
+                  {{ cam.name }} · {{ cam.status }}
+                </option>
+              </select>
+              <span v-if="!cameras.length && selectedOrgIds.length" class="subtitle">
+                No cameras in the selected organization(s).
+              </span>
             </div>
             <div class="field">
               <label>Scenario (usage category)</label>

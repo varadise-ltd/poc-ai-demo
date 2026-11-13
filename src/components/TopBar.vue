@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { backendLabel, getBackendMode, getInferenceDevice, getOrganization, getProject, syncTenantContext, type BackendMode } from '../api'
+import { backendLabel, getBackendMode, getDefaultOrgName, getDefaultProjectName, getInferenceDevice, getOrganization, getProject, syncTenantContext, type BackendMode } from '../api'
 import { store } from '../store'
 
 const backendMode = ref<BackendMode>(getBackendMode())
@@ -18,26 +18,47 @@ async function refreshInferenceDevice(): Promise<void> {
   }
 }
 
+// 展示层铁律：orgname 只展示明文 name，绝不显示 UUID。后端在 profile-service
+// 未就绪时会用 org_id（UUID）兜底当 name；这里把 UUID 识别出来并回退到默认名。
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function displayName(name: string | undefined | null, fallback: string): string {
+  const v = (name || '').trim()
+  return (!v || UUID_RE.test(v)) ? fallback : v
+}
+
 async function loadTenantContext(): Promise<void> {
-  // profile-service 是权威名称来源；失败时回退到后端本地落库的 records。
+  // orgId/projectId（UUID）仅用于传输/记录；展示必须解析成明文 name。
+  // 三层解析：profile-service（权威）→ 后端本地 records → 默认名（绝不 UUID）。
+  const defaultOrgName = getDefaultOrgName()
+  const defaultProjectName = getDefaultProjectName()
   try {
     const synced = await syncTenantContext(store.activeOrgId, store.projectId)
-    store.activeOrgName = synced.organization?.org_name || store.activeOrgId
-    store.activeProjectName = synced.project?.project_name || store.projectId
+    store.activeOrgName = displayName(synced.organization?.org_name, defaultOrgName)
+    store.activeProjectName = displayName(synced.project?.project_name, defaultProjectName)
   } catch {
     // profile-service 不可用 → 回退本地 records。
+  }
+  if (!store.activeOrgName || store.activeOrgName === defaultOrgName) {
     try {
       const [org, selectedProject] = await Promise.all([
         getOrganization(store.activeOrgId),
         getProject(store.projectId),
       ])
-      store.activeOrgName = org.org_name || store.activeOrgId
-      store.activeProjectName = selectedProject.project_name || store.projectId
+      const orgName = displayName(org.org_name, defaultOrgName)
+      const projectName = displayName(selectedProject.project_name, defaultProjectName)
+      // 仅在拿到了真实明文名（非默认兜底）时才覆盖。
+      if (orgName !== defaultOrgName) store.activeOrgName = orgName
+      if (projectName !== defaultProjectName) store.activeProjectName = projectName
     } catch {
-      store.activeOrgName = store.activeOrgId
-      store.activeProjectName = store.projectId
+      // 解析失败：保持默认名。
+      store.activeOrgName = store.activeOrgName || defaultOrgName
+      store.activeProjectName = store.activeProjectName || defaultProjectName
     }
   }
+  // 最终兜底：无论如何，展示层绝不出现 UUID。
+  store.activeOrgName = displayName(store.activeOrgName, defaultOrgName)
+  store.activeProjectName = displayName(store.activeProjectName, defaultProjectName)
   // 链路日志：租户名称解析结果（链路的末端「得到相应信息」）。与 api.ts 的
   // [cosmos-chain] init/req 日志、后端「tenant scope resolved」日志串成完整链路。
   console.info('[cosmos-chain] tenant name resolved', {

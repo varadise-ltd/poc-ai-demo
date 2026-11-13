@@ -264,7 +264,7 @@ onMounted(async () => {
   if (facesResponse.status === 'fulfilled') faceLibrary.value = facesResponse.value
   if (dashboardResponse.status === 'fulfilled' && dashboardResponse.value.dashboards.length) {
     dashboards.value = dashboardResponse.value.dashboards as DashboardDefinition[]
-    orgName.value = dashboardResponse.value.org_name || store.activeOrgName || store.activeOrgId
+    orgName.value = dashboardResponse.value.org_name || store.activeOrgName || ''
     if (!dashboards.value.some((dashboard) => dashboard.id === selectedId.value)) {
       selectedId.value = dashboards.value[0].id
     }
@@ -280,7 +280,7 @@ watch(
     if (facesResponse.status === 'fulfilled') faceLibrary.value = facesResponse.value
     if (dashboardResponse.status === 'fulfilled' && dashboardResponse.value.dashboards.length) {
       dashboards.value = dashboardResponse.value.dashboards as DashboardDefinition[]
-      orgName.value = dashboardResponse.value.org_name || store.activeOrgName || store.activeOrgId
+      orgName.value = dashboardResponse.value.org_name || store.activeOrgName || ''
       selectedId.value = dashboards.value.some((dashboard) => dashboard.id === selectedId.value)
         ? selectedId.value
         : dashboards.value[0].id

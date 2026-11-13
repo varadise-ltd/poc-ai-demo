@@ -18,7 +18,7 @@ async function loadFaceOrganizations(): Promise<void> {
     if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
       organizations.unshift({
         org_id: store.activeOrgId,
-        org_name: store.activeOrgName || store.activeOrgId,
+        org_name: store.activeOrgName || '',
         source: 'local',
         status: 'active',
       })
@@ -27,7 +27,7 @@ async function loadFaceOrganizations(): Promise<void> {
   } catch {
     faceOrganizations.value = [{
       org_id: store.activeOrgId,
-      org_name: store.activeOrgName || store.activeOrgId,
+      org_name: store.activeOrgName || '',
       source: 'local',
       status: 'active',
     }]

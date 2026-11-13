@@ -701,12 +701,16 @@ export async function createScriptRecord(fields: {
   description?: string
   organization?: string
   scenario?: string
+  orgIds?: string[]
+  camera?: string
 }): Promise<Script> {
   const script = await api.createScript({
     name: fields.name,
     base_script_id: fields.baseScriptId,
     description: fields.description,
     scenario: fields.scenario,
+    org_ids: fields.orgIds,
+    camera: fields.camera,
   })
   store.scripts.push(script)
   return script
