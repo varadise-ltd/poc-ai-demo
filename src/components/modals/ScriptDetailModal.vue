@@ -25,6 +25,7 @@ const selectedOrgIds = ref<string[]>([])
 const cameras = ref<Camera[]>([])
 const camerasLoading = ref(false)
 const selectedCamera = ref('')
+const orgDropdownOpen = ref(false)
 
 async function loadOrganizations(): Promise<void> {
   try {
@@ -53,6 +54,21 @@ async function loadCamerasForSelectedOrgs(): Promise<void> {
   } finally {
     camerasLoading.value = false
   }
+}
+
+// 已选组织摘要（下拉触发框上显示明文名，超出截断）。
+const selectedOrgSummary = computed(() => {
+  if (!selectedOrgIds.value.length) return 'Select organizations…'
+  const names = selectedOrgIds.value
+    .map((id) => organizations.value.find((o) => o.org_id === id)?.org_name || '')
+    .filter(Boolean)
+  if (!names.length) return `${selectedOrgIds.value.length} selected`
+  if (names.length <= 2) return names.join(', ')
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2} more`
+})
+
+function toggleOrgDropdown(): void {
+  orgDropdownOpen.value = !orgDropdownOpen.value
 }
 
 function toggleOrg(orgId: string): void {
@@ -194,16 +210,27 @@ function saveScript(): void {
             </div>
             <div v-if="isAddMode" class="field full">
               <label>Organizations (multi-select, one model → many orgs)</label>
-              <div class="org-multi-select">
-                <label v-for="org in organizations" :key="org.org_id" class="org-multi-option">
-                  <input
-                    type="checkbox"
-                    :checked="selectedOrgIds.includes(org.org_id)"
-                    @change="toggleOrg(org.org_id)"
-                  />
-                  <span>{{ org.org_name || org.org_id }}</span>
-                </label>
-                <span v-if="!organizations.length" class="subtitle">No organizations available</span>
+              <div class="org-multi-dropdown" :class="{ open: orgDropdownOpen }">
+                <button
+                  type="button"
+                  class="org-dropdown-trigger"
+                  :disabled="!organizations.length"
+                  @click="toggleOrgDropdown"
+                >
+                  <span class="org-dropdown-label">{{ selectedOrgSummary }}</span>
+                  <span class="org-dropdown-chevron">▾</span>
+                </button>
+                <div v-if="orgDropdownOpen" class="org-dropdown-panel">
+                  <label v-for="org in organizations" :key="org.org_id" class="org-multi-option">
+                    <input
+                      type="checkbox"
+                      :checked="selectedOrgIds.includes(org.org_id)"
+                      @change="toggleOrg(org.org_id)"
+                    />
+                    <span>{{ org.org_name || org.org_id }}</span>
+                  </label>
+                  <span v-if="!organizations.length" class="subtitle">No organizations available</span>
+                </div>
               </div>
               <span class="subtitle">An AI model may belong to multiple organizations; each camera belongs to exactly one.</span>
             </div>
@@ -289,3 +316,76 @@ function saveScript(): void {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 组织多选下拉：触发框 + 可滚动复选面板（相对定位，不撑破 modal 布局） */
+.org-multi-dropdown {
+  position: relative;
+}
+.org-dropdown-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+.org-dropdown-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.org-dropdown-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.org-dropdown-chevron {
+  color: var(--muted, #667085);
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+.org-multi-dropdown.open .org-dropdown-chevron {
+  transform: rotate(180deg);
+}
+.org-dropdown-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+}
+.org-multi-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.org-multi-option:hover {
+  background: var(--surface-hover, #f2f4f7);
+}
+.org-multi-option input[type='checkbox'] {
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.org-multi-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>
