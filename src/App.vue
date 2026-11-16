@@ -3,6 +3,7 @@ import TopBar from './components/TopBar.vue'
 import TabNav from './components/TabNav.vue'
 import AICamLiveView from './components/AICamLiveView.vue'
 import ConfigurationView from './components/ConfigurationView.vue'
+import ChatbotWidget from './components/ChatbotWidget.vue'
 import DashboardView from './components/DashboardView.vue'
 import { store } from './store'
 </script>
@@ -17,5 +18,6 @@ import { store } from './store'
       <ConfigurationView v-show="store.activeTab === 'config'" />
    
     </main>
+    <ChatbotWidget v-show="store.activeTab === 'demo'" />
   </div>
 </template>

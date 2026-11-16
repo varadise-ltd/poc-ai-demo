@@ -84,8 +84,38 @@ npm run preview
 ```
 
 The API base URL comes from `VITE_API_BASE` (`src/api.ts`, build-time), defaulting to
-`http://localhost:8000`. In Docker the value is `""` so the nginx reverse proxy serves `/api/`
-same-origin (`docker compose up -d --build` in `poc-ai-service`, then http://localhost:8080).
+`http://localhost:8000`.
+
+### Run both services with Docker
+
+The backend (`poc-ai-service`) and the frontend (`poc-ai-demo`) are two independent Compose
+projects. Start the backend first, then the frontend.
+
+```bash
+# 1) Backend — http://localhost:8000 (health: /api/health, Swagger: /docs)
+cd poc-ai-service
+cp .env.example .env     # first time only; fill POSTGRES_HOST/DB/USER/PASSWORD
+docker compose up -d --build
+curl -s localhost:8000/api/health
+
+# 2) Frontend — http://localhost:5173
+cd ../poc-ai-demo
+POC_BACKEND_TARGET=local \
+POC_LOCAL_API_BASE=http://localhost:8000 \
+  docker compose up -d --build
+```
+
+- `POC_LOCAL_API_BASE` is baked into the frontend at build time and is called **from the
+  browser**, so it must be a backend address the browser can reach (not a container name).
+  Rebuild (`--build`) after changing it. To avoid retyping, put both values in a `.env` file
+  next to `docker-compose.yml`. Without them the frontend targets the cloud backend.
+- `POC_FRONTEND_PORT` changes the frontend port (default `5173`).
+- Logs: `docker compose logs -f backend` (in `poc-ai-service`) / `docker compose logs -f frontend`.
+- Stop: `docker compose down` in each folder. Never use `down -v` on the backend; it keeps
+  its data under `POC_AI_DATA_DIR` (default `/mnt/poc-ai-data`; for a quick trial use
+  `export POC_AI_DATA_DIR=./data`).
+- The backend needs a reachable PostgreSQL and exits at startup if it can't connect.
+- The R04 chat feature expects a camera named `R04` to exist in the Cameras page.
 
 ## Notes
 
