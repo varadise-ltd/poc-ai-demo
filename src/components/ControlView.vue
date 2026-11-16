@@ -200,16 +200,9 @@ const displayedScripts = computed(() => filteredScripts.value ?? store.scripts)
 async function loadScriptOrganizations(): Promise<void> {
   scriptOrganizationsLoading.value = true
   try {
-    const organizations = (await listOrganizations()).filter((org) => org.status === 'active')
-    if (!organizations.some((org) => org.org_id === store.activeOrgId)) {
-      organizations.unshift({
-        org_id: store.activeOrgId,
-        org_name: store.activeOrgName || '',
-        source: 'local',
-        status: 'active',
-      })
-    }
-    scriptOrganizations.value = organizations
+    // 后端 GET /api/orgs 默认已按 visible 过滤（隐藏组织不返回），
+    // 下拉严格遵循后端可见集合，与 Organization 管理页的开关保持一致。
+    scriptOrganizations.value = (await listOrganizations()).filter((org) => org.status === 'active')
   } catch {
     scriptOrganizations.value = [{
       org_id: store.activeOrgId,
@@ -330,6 +323,15 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (pollTimer) window.clearInterval(pollTimer)
 })
+
+// 切到 Configuration → AI model 时重新加载组织下拉，
+// 同步 Organization 管理页最新的 visible 开关。
+watch(
+  () => [store.activeTab, store.configTab] as const,
+  ([tab, configTab]) => {
+    if (tab === 'config' && configTab === 'model') void loadScriptOrganizations()
+  },
+)
 </script>
 
 <template>

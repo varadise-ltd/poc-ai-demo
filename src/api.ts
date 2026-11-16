@@ -178,6 +178,8 @@ export interface OrganizationRecord {
   org_name: string
   source: string
   status: 'active' | 'disabled'
+  /** Show/hide toggle for the org list (false = hidden from the list). */
+  visible?: boolean
   last_synced_at?: string | null
 }
 
@@ -261,10 +263,35 @@ export async function syncTenantContext(orgId = activeOrgId, projectId = activeP
   return handle(res)
 }
 
-export async function listOrganizations(): Promise<OrganizationRecord[]> {
-  const res = await request(`${BASE_URL}/api/orgs`)
+export async function listOrganizations(includeHidden = false): Promise<OrganizationRecord[]> {
+  const query = includeHidden ? '?include_hidden=true' : ''
+  const res = await request(`${BASE_URL}/api/orgs${query}`)
   const data = await handle<{ organizations: OrganizationRecord[] }>(res)
   return data.organizations ?? []
+}
+
+/** Toggle whether an organization shows in the org list (visible = show / hide). */
+export async function setOrgVisible(orgId: string, visible: boolean): Promise<OrganizationRecord> {
+  const res = await request(`${BASE_URL}/api/orgs/${encodeURIComponent(orgId)}/visible`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visible }),
+  })
+  return handle<OrganizationRecord>(res)
+}
+
+/** Batch set the visible organization set: listed ids are shown, the rest are hidden. */
+export async function setOrgsVisible(orgIds: string[]): Promise<{
+  visible_org_ids: string[]
+  visible_count: number
+  hidden_count: number
+}> {
+  const res = await request(`${BASE_URL}/api/orgs/visible`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ org_ids: orgIds }),
+  })
+  return handle(res)
 }
 
 export interface DashboardListResult {

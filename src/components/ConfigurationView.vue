@@ -3,11 +3,13 @@ import { store, type ConfigTabId } from '../store'
 import CameraView from './CameraView.vue'
 import ControlView from './ControlView.vue'
 import FaceView from './FaceView.vue'
+import OrganizationView from './OrganizationView.vue'
 
 const sections: { id: ConfigTabId; label: string; icon: string }[] = [
   { id: 'camera', label: 'Camera', icon: '📷' },
   { id: 'model', label: 'AI model', icon: '🤖' },
   { id: 'face', label: 'Face management', icon: '🧑' },
+  { id: 'org', label: 'Organization', icon: '🏢' },
 ]
 </script>
 
@@ -29,6 +31,7 @@ const sections: { id: ConfigTabId; label: string; icon: string }[] = [
       <CameraView v-show="store.configTab === 'camera'" />
       <ControlView v-show="store.configTab === 'model'" />
       <FaceView v-show="store.configTab === 'face'" />
+      <OrganizationView v-show="store.configTab === 'org'" />
     </div>
   </div>
 </template>

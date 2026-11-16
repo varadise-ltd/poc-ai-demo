@@ -10,7 +10,7 @@ import {
 import type { Alert, Camera, CameraAI, CameraModelRun, EventItem, FaceData, FaceMeta, FaceValidation, HistoryEvent, Script, ScriptRun } from './types'
 
 export type TabId = 'demo' | 'config' | 'dashboard'
-export type ConfigTabId = 'camera' | 'model' | 'face'
+export type ConfigTabId = 'camera' | 'model' | 'face' | 'org'
 export const store = reactive({
   // Active tenant. The API client sends this as X-Organization-Id on every request.
   activeOrgId: api.getActiveOrgId(),
