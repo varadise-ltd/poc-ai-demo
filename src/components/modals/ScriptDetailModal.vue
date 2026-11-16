@@ -5,7 +5,7 @@ import {
   store,
   updateScriptMetaRecord,
 } from '../../store'
-import { getOrganization, listCameras, listOrganizations, type OrganizationRecord } from '../../api'
+import { getOrganization, listCameras, listOrganizations, listScripts as apiListScripts, type OrganizationRecord } from '../../api'
 import type { Camera, Script } from '../../types'
 
 const isAddMode = computed(() => store.scriptDetailMode === 'add')
@@ -91,6 +91,7 @@ watch(
       selectedOrgIds.value = store.activeOrgId ? [store.activeOrgId] : []
       selectedCamera.value = ''
       void loadOrganizations().then(loadCamerasForSelectedOrgs)
+      void loadBaseScripts()
     }
   },
   { immediate: true },
@@ -100,7 +101,23 @@ const title = computed(() => (isAddMode.value ? 'Add AI Model' : script.value?.n
 
 // 新建 AI model 必须基于一个内置场景：检测器接线（detector_type/model/classes/params）
 // 是代码定义而非数据，后端会直接复制基座场景的接线。
-const baseOptions = computed(() => store.scripts.filter((s) => !s.custom))
+//
+// 基座列表用「全量（含软删除）的内置模型」：软删除的内置模型仍然保留完整的
+// detector_type / model / classes / params 接线，可以继续作为克隆基座；排除的是
+// 用户自建的 custom 模型（避免递归复制）。
+const baseScripts = ref<Script[]>([])
+
+async function loadBaseScripts(): Promise<void> {
+  try {
+    const { scripts } = await apiListScripts(undefined, undefined, undefined, true)
+    baseScripts.value = scripts.filter((s) => !s.custom)
+  } catch {
+    // 拉取全量失败时回退到当前已加载的（未删除）内置模型。
+    baseScripts.value = store.scripts.filter((s) => !s.custom)
+  }
+}
+
+const baseOptions = computed(() => baseScripts.value)
 
 const baseScriptId = computed({
   get: () => {
