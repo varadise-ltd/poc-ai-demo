@@ -601,8 +601,21 @@ const monitorEvents = computed<EventItem[]>(() => {
   )
 })
 
-// Detailed detection rows are intentionally hidden on this page. Use History
-// to search the durable events, paginate them, and inspect snapshots.
+/**
+ * Stable key for the live event rows. Durable events carry ``eventId``; the
+ * fallback keeps the key unique enough when an older backend omits it. Stable
+ * keys let ``<TransitionGroup>`` animate only *new* rows in instead of
+ * re-rendering the whole overlay on every poll.
+ */
+function feedKey(e: EventItem): string {
+  return e.eventId ?? `${e.time}|${e.camera}|${e.name}`
+}
+
+// 叠加在 output stream 画面上的最新检测事件（后端按时间倒序返回，取前几条，
+// 避免长文本遮挡整个视频区域）。点击任意一条仍可打开 Result detail。
+const OVERLAY_EVENT_LIMIT = 5
+const overlayEvents = computed<EventItem[]>(() => monitorEvents.value.slice(0, OVERLAY_EVENT_LIMIT))
+
 watch(monitorCamera, () => {
   if (isCountingScript.value && previewing.value) void loadPreviewHistory()
 })
@@ -870,6 +883,24 @@ onBeforeUnmount(() => {
                 class="preview-roi-label"
               >ROI {{ index + 1 }}</text>
             </svg>
+            <!-- 检测结果直接以文字形式叠加在 output stream 画面上（动态进入）。 -->
+            <div class="video-event-overlay" aria-live="polite">
+              <TransitionGroup name="video-event" tag="div" class="video-event-list">
+                <button
+                  v-for="e in overlayEvents"
+                  :key="feedKey(e)"
+                  type="button"
+                  class="video-event"
+                  :class="{ 'is-alert': !e.ok }"
+                  :title="`${e.time} · ${e.camera}\n${e.name}`"
+                  @click="openEventDetail(e)"
+                >
+                  <span class="video-event-time">{{ e.time }}</span>
+                  <span class="video-event-text">{{ e.name }}</span>
+                  <span v-if="e.confidence" class="video-event-conf">{{ e.confidence }}</span>
+                </button>
+              </TransitionGroup>
+            </div>
           </div>
           <div v-else class="video-placeholder">
             <span v-if="!isRunning">This AI model is stopped — start it on the AI model page, then click “Preview”.</span>
