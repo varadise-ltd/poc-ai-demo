@@ -83,8 +83,12 @@ npm run build
 npm run preview
 ```
 
-The API base URL comes from `VITE_API_BASE` (`src/api.ts`, build-time), defaulting to
-`http://localhost:8000`.
+Backend routing is selected at build time with `VITE_BACKEND_TARGET`:
+
+- `local`: the browser uses `VITE_LOCAL_API_BASE`.
+- `cloud`: the browser always calls same-origin `/api/`. The nginx container then proxies
+  `/api/` to the runtime `BACKEND_HOST` (the Cloud backend Service/FQDN). This keeps the
+  private Cloud backend address out of the browser bundle.
 
 ### Run both services with Docker
 

@@ -46,7 +46,7 @@ Runtime mirrors
 There is **no** `cameraOutputs` map any more: the output stream is stored per relation row in
 `camera_ai.output` and read back through `CameraModelRun.output` (see `scriptOutput()`).
 
-Demo-view flags: `running`, `overlay`, `previewPaused`, `previewShowLabels`.
+AI Cam Live view flags: `running`, `overlay`, `previewPaused`, `previewShowLabels`.
 
 Modal visibility (booleans): `showResultDetail`, `showHistory`, `showControlDetail`,
 `showScriptDetail`, `showCameraEditor`, `showFaceEditor`, `showFaceDetail`, `showDeleteFace`,
@@ -84,7 +84,7 @@ Scripts / runs
 - `loadScripts()` — replaces `scripts` and `scriptRuns`, then corrects a stale `selectedScriptId`
 - `updateScriptMetaRecord(id, fields)` — PATCH + local patch
 - `toggleRun(id)` — start/stop via first assigned camera
-- `startSelectedScript()` / `stopSelectedScript()` — demo-view preview controls
+- `startSelectedScript()` / `stopSelectedScript()` — AI Cam Live view preview controls
 - `createScriptRecord(fields)` — `POST /api/scripts` (clones `baseScriptId`); followed by
   `loadScripts()` so the new model appears in the catalog
 - `loadDeletedScripts()` — `GET /api/scripts?include_deleted=true`, filtered to `deleted`
