@@ -794,6 +794,19 @@ export async function listScripts(
   return { scripts, runs }
 }
 
+/**
+ * 全部内置（static）AI model（含软删除），供 Add AI Model 的
+ * 「Base AI model (detector wiring to clone)」下拉使用。
+ *
+ * 软删除的内置模型仍保留完整检测器接线，可继续作为克隆基座；用户自建的
+ * custom 模型不可作基座（后端 is_static 校验），故后端已在响应中排除。
+ */
+export async function listBaseModels(): Promise<Script[]> {
+  const res = await request(`${BASE_URL}/api/scripts/base-models`)
+  const data = await handle<ScriptRecord[]>(res)
+  return data.map(toScript)
+}
+
 export async function updateScriptMeta(
   id: string,
   fields: { organization?: string; scenario?: string },

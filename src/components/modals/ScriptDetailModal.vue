@@ -5,7 +5,7 @@ import {
   store,
   updateScriptMetaRecord,
 } from '../../store'
-import { getOrganization, listCameras, listOrganizations, listScripts as apiListScripts, type OrganizationRecord } from '../../api'
+import { getOrganization, listBaseModels, listCameras, listOrganizations, type OrganizationRecord } from '../../api'
 import type { Camera, Script } from '../../types'
 
 const isAddMode = computed(() => store.scriptDetailMode === 'add')
@@ -109,10 +109,10 @@ const baseScripts = ref<Script[]>([])
 
 async function loadBaseScripts(): Promise<void> {
   try {
-    const { scripts } = await apiListScripts(undefined, undefined, undefined, true)
-    baseScripts.value = scripts.filter((s) => !s.custom)
+    // 后端 /api/scripts/base-models 返回全部内置模型（含软删除），供克隆基座使用。
+    baseScripts.value = await listBaseModels()
   } catch {
-    // 拉取全量失败时回退到当前已加载的（未删除）内置模型。
+    // 拉取失败时回退到当前已加载的（未删除）内置模型。
     baseScripts.value = store.scripts.filter((s) => !s.custom)
   }
 }
