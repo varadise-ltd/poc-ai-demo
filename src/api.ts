@@ -136,16 +136,58 @@ function requestInit(init: RequestInit = {}, requestId?: string): RequestInit {
   return { ...init, headers }
 }
 
+// 系统级兜底 1：集合端点统一带尾斜杠。platform nginx 对无尾斜杠的
+// /api/<collection> 触发 directory redirect（301, Location 降级 http），
+// https 页面直接 Mixed Content 拦截 → NetworkError（表现为「点 Filter 没反应」）。
+// 后端已为所有 /api 集合注册双写法路由（app/core/routing.py），这里在唯一的
+// request() 入口统一补斜杠，任何新增调用点自动获得保护，无需逐处修改。
+const COLLECTION_PATHS = new Set([
+  '/api/scripts', '/api/faces', '/api/cameras', '/api/camera-ai', '/api/alerts',
+  '/api/orgs', '/api/projects', '/api/dashboard', '/api/roi', '/api/snapshots',
+  '/api/stream',
+])
+
+function withTrailingSlash(input: RequestInfo | URL): RequestInfo | URL {
+  const raw = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+  // 相对（'/api/…'、'http(s)://…'）都能用同一正则拆出 path。
+  const m = raw.match(/^([^?#]*)([?#].*)?$/)
+  if (!m) return input
+  const [, pathPart, rest = ''] = m
+  const origin = pathPart.match(/^https?:\/\/[^/]+/)?.[0] ?? ''
+  const path = pathPart.slice(origin.length)
+  if (!COLLECTION_PATHS.has(path)) return input
+  const fixed = `${origin}${path}/${rest}`
+  if (typeof input === 'string') return fixed
+  if (input instanceof URL) return new URL(fixed, typeof window !== 'undefined' ? window.location.href : undefined)
+  return new Request(fixed, input)
+}
+
+// 系统级兜底 2：任何 API 请求最长 30s。没有超时的 fetch 在网络半开（代理挂起、
+// 连接僵死）时会永远 pending，让页面按钮停在 “Filtering…/Saving…” 且 disabled，
+// 同样表现为「点击无反应」。超时后抛错走各页面既有的错误展示路径。
+const REQUEST_TIMEOUT_MS = 30_000
+
 async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const requestId = newChainRequestId()
   const finalInit = requestInit(init, requestId)
+  if (!finalInit.signal && typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    finalInit.signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  }
+  const finalInput = withTrailingSlash(input)
   const method = finalInit.method || 'GET'
-  const url = typeof input === 'string'
-    ? input
-    : (input instanceof URL ? input.toString() : input.url)
+  const url = typeof finalInput === 'string'
+    ? finalInput
+    : (finalInput instanceof URL ? finalInput.toString() : finalInput.url)
   // 每条请求一行链路日志：request id、方法、URL 与本次携带的租户头。
   chainLog(`req=${requestId} ${method} ${url} org=${activeOrgId} project=${activeProjectId}`)
-  return fetch(input, finalInit)
+  try {
+    return await fetch(finalInput, finalInit)
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${redactUrl(url)}`)
+    }
+    throw err
+  }
 }
 
 /** Absolute backend base URL currently in use (shown in error messages). */
@@ -529,13 +571,22 @@ export interface FaceMutationOutcome {
   validation?: FaceValidation
 }
 
-export async function createFace(name: string, images: FaceImageInput[]): Promise<FaceMutationOutcome> {
+/** 新建人脸人员。targetOrgId 为显式目标组织（Add face data 的 Organization
+ *  选择）：作为 form 字段 org_id 传给后端 _resolve_target_org，允许与当前
+ *  active org 不同，且不改变页面当前组织视图。缺省沿用 active org（旧行为）。 */
+export async function createFace(
+  name: string,
+  images: FaceImageInput[],
+  targetOrgId?: string,
+): Promise<FaceMutationOutcome> {
   const form = new FormData()
   form.append('name', name)
   for (const { file, angle } of images) {
     form.append('images', file)
     form.append('angles', angle)
   }
+  const org = (targetOrgId || '').trim()
+  if (org && org !== activeOrgId) form.append('org_id', org)
   const res = await request(`${BASE_URL}/api/faces`, { method: 'POST', body: form })
   const data = await handle<FaceMutationResult>(res)
   return { face: toFaceData(data), validation: data.validation }
@@ -768,16 +819,23 @@ function toScript(r: ScriptRecord): Script {
   }
 }
 
+/**
+ * AI model 目录。``organization`` = Filter 的 Organization（org_id，与
+ * X-Organization-Id 指向同一组织）；``camera`` = camera ↔ AI model 关系过滤
+ * （摄像机名称或 UUID，只返回指派到该摄像机的 AI model）。
+ */
 export async function listScripts(
   status?: string,
   organization?: string,
   scenario?: string,
   includeDeleted = false,
+  camera?: string,
 ): Promise<{ scripts: Script[]; runs: Record<string, ScriptRun> }> {
   const q = new URLSearchParams()
   if (status) q.set('status', status)
   if (organization) q.set('org_id', organization)
   if (scenario) q.set('scenario', scenario)
+  if (camera) q.set('camera', camera)
   if (includeDeleted) q.set('include_deleted', 'true')
   const qs = q.toString()
   // 集合端点统一带尾斜杠：platform nginx 对无尾斜杠的 /api/scripts 触发

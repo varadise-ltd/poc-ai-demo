@@ -667,10 +667,21 @@ export async function loadFaces(quiet = false): Promise<void> {
 // 512d 向量在後端同步計算：add/update 接口回傳時 has_embedding_512 已是終值，
 // 不再需要前台輪詢等待後台補算（舊版的 defer_512 已移除）。
 
-export async function addFaceRecord(name: string, images: { file: File; angle: string }[]): Promise<FaceValidation | undefined> {
-  const { face, validation } = await api.createFace(name, images)
-  store.faceData.unshift(face)
-  return validation
+/**
+ * 新增人脸。targetOrgId（Add face data 的 Organization 选择）可与当前活动
+ * 组织不同：后端把人员落在目标组织，本列表只显示活动组织的人脸，因此
+ * 跨组织创建时**不**插入当前列表（插了就是幽灵行），改为返回归属信息供
+ * 弹窗提示「已保存到 <org>，切换组织可见」。
+ */
+export async function addFaceRecord(
+  name: string,
+  images: { file: File; angle: string }[],
+  targetOrgId?: string,
+): Promise<{ validation?: FaceValidation; face: FaceData; crossOrg: boolean }> {
+  const { face, validation } = await api.createFace(name, images, targetOrgId)
+  const crossOrg = !!face.orgId && face.orgId !== store.activeOrgId
+  if (!crossOrg) store.faceData.unshift(face)
+  return { validation, face, crossOrg }
 }
 
 export async function updateFaceRecord(id: number, name?: string, images?: { file: File; angle: string }[]): Promise<FaceValidation | undefined> {

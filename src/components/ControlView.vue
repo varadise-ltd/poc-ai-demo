@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { listOrganizations, listScripts as apiListScripts, redactUrl, type OrganizationRecord } from '../api'
+import {
+  listCameras as apiListCameras,
+  listOrganizations,
+  listScripts as apiListScripts,
+  redactUrl,
+  type OrganizationRecord,
+} from '../api'
 import {
   addStreamCamera,
   availableStreamCameras,
@@ -19,7 +25,7 @@ import {
   toggleCameraRun,
   toggleRun,
 } from '../store'
-import type { Script } from '../types'
+import type { Camera, Script } from '../types'
 import ControlModal from './modals/ControlModal.vue'
 import ScriptDetailModal from './modals/ScriptDetailModal.vue'
 
@@ -175,15 +181,19 @@ async function onToggleRun(id: string): Promise<void> {
   }
 }
 
-// Script filters; tenant scope is controlled by the active Org ID.
+// Script filters; Organization / Camera 都会作为查询参数传给后端。
 const scriptFilterStatus = ref('')
 const scriptFilterScenario = ref('')
 const scriptFilterOrgId = ref(store.activeOrgId)
+const scriptFilterCamera = ref('')
 const scriptOrganizations = ref<OrganizationRecord[]>([])
 const scriptOrganizationsLoading = ref(false)
 const scriptFilterLoading = ref(false)
 // null = 未筛选，展示完整列表；否则展示后端筛选结果
 const filteredScripts = ref<Script[] | null>(null)
+// Camera 下拉候选：Filter 所选组织下的摄像机（camera ↔ AI model 关系过滤）。
+const scriptFilterCameras = ref<Camera[]>([])
+const scriptFilterCamerasLoading = ref(false)
 
 const scriptScenarioOptions = computed(() => {
   const scenarios = new Set<string>()
@@ -215,14 +225,42 @@ async function loadScriptOrganizations(): Promise<void> {
   }
 }
 
+/** 拉取 Filter 目标组织下的摄像机，作为 Camera（关系）过滤的候选。 */
+async function loadScriptFilterCameras(orgId: string): Promise<void> {
+  scriptFilterCamerasLoading.value = true
+  try {
+    // 目标组织 = 当前活动组织时直接用已加载的 store.cameras，避免重复请求；
+    // 跨组织时显式传 org_id（后端 list_cameras 支持显式组织覆盖）。
+    if (orgId === store.activeOrgId) {
+      scriptFilterCameras.value = [...store.cameras]
+    } else {
+      scriptFilterCameras.value = await apiListCameras(undefined, orgId)
+    }
+  } catch {
+    scriptFilterCameras.value = []
+  } finally {
+    scriptFilterCamerasLoading.value = false
+  }
+}
+
+// 切换 Filter 的 Organization 时重新加载候选摄像机，并清掉失效的 Camera 选择。
+watch(scriptFilterOrgId, (orgId) => {
+  scriptFilterCamera.value = ''
+  void loadScriptFilterCameras(orgId)
+})
+
 async function applyScriptFilter(): Promise<void> {
   scriptFilterLoading.value = true
   try {
+    // 先切活动组织（请求头 X-Organization-Id），再带上一致的 org_id 查询参数，
+    // 避免中间件因「头与查询组织不一致」返回 400。
     if (scriptFilterOrgId.value !== store.activeOrgId) await setActiveOrgId(scriptFilterOrgId.value)
     const { scripts } = await apiListScripts(
       scriptFilterStatus.value || undefined,
-      undefined,
+      scriptFilterOrgId.value || undefined,
       scriptFilterScenario.value || undefined,
+      false,
+      scriptFilterCamera.value || undefined,
     )
     filteredScripts.value = scripts
   } catch (err) {
@@ -236,6 +274,7 @@ function resetScriptFilter(): void {
   scriptFilterStatus.value = ''
   scriptFilterScenario.value = ''
   scriptFilterOrgId.value = store.activeOrgId
+  scriptFilterCamera.value = ''
   filteredScripts.value = null
 }
 
@@ -243,6 +282,7 @@ watch(
   () => store.activeOrgId,
   (orgId) => {
     scriptFilterOrgId.value = orgId
+    scriptFilterCamera.value = ''
     filteredScripts.value = null
   },
 )
@@ -311,7 +351,7 @@ function addScript(): void {
 }
 
 onMounted(async () => {
-  await Promise.all([loadScripts(), loadScriptOrganizations()])
+  await Promise.all([loadScripts(), loadScriptOrganizations(), loadScriptFilterCameras(store.activeOrgId)])
   // Per-camera run state drives the Run/Stop buttons and their Online/Offline link.
   await loadAllCameraRuns()
   // Keeps the "Deleted (n)" badge honest before the restore panel is ever opened.
@@ -381,6 +421,17 @@ watch(
           <select v-model="scriptFilterScenario">
             <option value="">All scenarios</option>
             <option v-for="sc in scriptScenarioOptions" :key="sc" :value="sc">{{ sc }}</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Camera</label>
+          <select
+            v-model="scriptFilterCamera"
+            :disabled="scriptFilterCamerasLoading || scriptFilterLoading"
+            title="Only AI models assigned to this camera (camera ↔ AI model relation)"
+          >
+            <option value="">All cameras</option>
+            <option v-for="cam in scriptFilterCameras" :key="cam.id" :value="cam.name">{{ cam.name }}</option>
           </select>
         </div>
         <div class="filter-actions">

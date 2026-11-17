@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { listOrganizations, type OrganizationRecord } from '../../api'
 import { addFaceRecord, store, updateFaceRecord } from '../../store'
 import type { FaceValidation } from '../../types'
 
@@ -22,6 +23,36 @@ const EXTRA_ANGLES = [
 const isEditing = computed(() => store.editingFaceId !== null)
 
 const name = ref('')
+// Add face data 的归属组织：默认当前活动组织，可选任一 active 组织。
+// 人脸库按组织共享（org-scoped），这里选择的是「新人员落到哪个组织」。
+const targetOrgId = ref(store.activeOrgId)
+const organizations = ref<OrganizationRecord[]>([])
+const organizationsLoading = ref(false)
+
+async function loadOrganizations(): Promise<void> {
+  organizationsLoading.value = true
+  try {
+    // 与 Face management 筛选一致：后端 visible 集合 ∩ active。
+    organizations.value = (await listOrganizations()).filter((org) => org.status === 'active')
+  } catch {
+    organizations.value = []
+  } finally {
+    organizationsLoading.value = false
+  }
+  // 当前活动组织必须始终可选（即使它不在 visible 列表里）。
+  if (!organizations.value.some((o) => o.org_id === store.activeOrgId)) {
+    organizations.value.unshift({
+      org_id: store.activeOrgId,
+      org_name: store.activeOrgName || store.activeOrgId,
+      source: 'local',
+      status: 'active',
+    })
+  }
+}
+
+function orgLabel(org: OrganizationRecord): string {
+  return org.org_name || org.org_id
+}
 // 正脸（必填）：新增时必须选择；编辑时重新上传则整体替换全部角度。
 const frontImage = ref<PendingImage | null>(null)
 // 额外角度（可选）：left / right / down，动态增删。
@@ -45,7 +76,10 @@ const hasNewFront = computed(() => frontImage.value?.file != null)
 const hasNewExtra = computed(() => extraImages.value.some((e) => e.file != null))
 
 // 客户端排重预检：姓名重复时立即提示，避免白跑一次请求。
+// 仅对「目标组织 = 当前列表组织」有效；跨组织新增时本地列表不含目标组织
+// 人员，交由后端在目标组织内判重（重名会返回 409 并展示在 error 中）。
 const duplicateName = computed(() => {
+  if (!isEditing.value && targetOrgId.value !== store.activeOrgId) return null
   const trimmed = name.value.trim().toLowerCase()
   if (!trimmed) return null
   return store.faceData.find(
@@ -92,6 +126,9 @@ watch(
       if (face) name.value = face.name
     } else {
       name.value = ''
+      // 每次打开都重置归属为当前活动组织，并刷新组织下拉（visible 开关可能已变）。
+      targetOrgId.value = store.activeOrgId
+      void loadOrganizations()
     }
   },
 )
@@ -195,6 +232,7 @@ async function save(): Promise<void> {
   error.value = ''
   try {
     let validation: FaceValidation | undefined
+    let crossOrgName = ''
     if (store.editingFaceId !== null) {
       if (hasNewFront.value) {
         // 重新上传正脸 → 整体替换全部角度（正脸 + 已选额外角度）。
@@ -208,15 +246,29 @@ async function save(): Promise<void> {
         error.value = 'Please choose a front-facing photo.'
         return
       }
-      validation = await addFaceRecord(trimmed, buildImages())
+      const outcome = await addFaceRecord(trimmed, buildImages(), targetOrgId.value)
+      validation = outcome.validation
+      if (outcome.crossOrg) {
+        const savedOrgId = outcome.face.orgId || targetOrgId.value
+        const savedOrg = organizations.value.find((o) => o.org_id === savedOrgId)
+        crossOrgName = savedOrg ? orgLabel(savedOrg) : savedOrgId
+      }
     }
     // 保存成功后立即关闭弹窗；后端校验告警改在 Face management 列表中提示，
     // 避免用户以为保存失败而重复提交。
-    store.faceNotice = validation
+    const messages = [...(validation?.warnings ?? [])]
+    if (crossOrgName) {
+      messages.unshift(
+        `Saved to organization “${crossOrgName}”. Switch the Organization filter to “${crossOrgName}” to view this record.`,
+      )
+    }
+    store.faceNotice = validation || crossOrgName
       ? {
           name: trimmed,
-          summary: `${validation.width}×${validation.height} · ${validation.face_count} face(s) · detector: ${validation.detector}`,
-          messages: validation.warnings,
+          summary: validation
+            ? `${validation.width}×${validation.height} · ${validation.face_count} face(s) · detector: ${validation.detector}`
+            : `registered in ${crossOrgName}`,
+          messages,
         }
       : null
     store.showFaceEditor = false
@@ -248,6 +300,22 @@ async function save(): Promise<void> {
               Edit that record instead of adding a duplicate.
             </small>
             <small v-else class="subtitle">Each person can be registered once.</small>
+          </div>
+
+          <!-- 归属组织（仅新增可选；人脸库按组织共享） -->
+          <div v-if="!isEditing" class="field full">
+            <label>Organization</label>
+            <select v-model="targetOrgId" :disabled="organizationsLoading || saving">
+              <option v-for="org in organizations" :key="org.org_id" :value="org.org_id">
+                {{ orgLabel(org) }}{{ org.org_id === store.activeOrgId ? ' (current)' : '' }}
+              </option>
+            </select>
+            <small class="subtitle">
+              The person is registered in the selected organization's shared face library.
+              <template v-if="targetOrgId !== store.activeOrgId">
+                After saving, switch the Organization filter to that organization to view the record.
+              </template>
+            </small>
           </div>
 
           <!-- 已注册角度（编辑模式只读参考） -->
