@@ -780,7 +780,10 @@ export async function listScripts(
   if (scenario) q.set('scenario', scenario)
   if (includeDeleted) q.set('include_deleted', 'true')
   const qs = q.toString()
-  const res = await request(`${BASE_URL}/api/scripts${qs ? `?${qs}` : ''}`)
+  // 集合端点统一带尾斜杠：platform nginx 对无尾斜杠的 /api/scripts 触发
+  // directory redirect（301, Location 降级 http），与 http→https 308 及后端
+  // redirect_slashes 307 构成死循环 → NetworkError。带斜杠可直达后端 200。
+  const res = await request(`${BASE_URL}/api/scripts/${qs ? `?${qs}` : ''}`)
   const data = await handle<ScriptRecord[]>(res)
   const scripts = data.map(toScript)
   const runs: Record<string, ScriptRun> = {}
@@ -1516,7 +1519,9 @@ export async function createScript(fields: {
   org_ids?: string[]
   camera?: string
 }): Promise<Script> {
-  const res = await request(`${BASE_URL}/api/scripts`, {
+  // 带尾斜杠：绕过 platform nginx 对无斜杠 /api/scripts 的 directory redirect
+  // 301（Location 降级 http）造成的 301↔308↔307 死循环（fetch → NetworkError）。
+  const res = await request(`${BASE_URL}/api/scripts/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
