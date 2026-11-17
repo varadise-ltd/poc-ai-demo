@@ -130,9 +130,13 @@ export function setActiveProjectId(projectId: string): void {
 
 function requestInit(init: RequestInit = {}, requestId?: string): RequestInit {
   const headers = new Headers(init.headers)
-  headers.set('X-Organization-Id', activeOrgId)
-  headers.set('X-Project-Id', activeProjectId)
-  if (requestId) headers.set('X-Request-ID', requestId)
+  // 调用方显式传入的租户头（listProjects / saveProject / 跨组织 listCameras /
+  // createCamera 的目标组织）必须保留，不能被 active 租户覆盖；否则后端看到
+  // 的永远是当前组织（列错项目、或「头 ≠ org_id 查询参数」被中间件 400）。
+  if (!headers.has('X-Organization-Id')) headers.set('X-Organization-Id', activeOrgId)
+  if (!headers.has('X-Project-Id')) headers.set('X-Project-Id', activeProjectId)
+  // 同理保留调用方的 X-Request-ID（runScriptCamera 等的 ui-run-… 关联 id）。
+  if (requestId && !headers.has('X-Request-ID')) headers.set('X-Request-ID', requestId)
   return { ...init, headers }
 }
 
@@ -167,9 +171,30 @@ function withTrailingSlash(input: RequestInfo | URL): RequestInfo | URL {
 // 同样表现为「点击无反应」。超时后抛错走各页面既有的错误展示路径。
 const REQUEST_TIMEOUT_MS = 30_000
 
+// 系统级兜底 3：404 时按「尾斜杠另一写法」重试一次。线上后端可能是旧版本
+// （未注册双写法路由 / redirect_slashes 在 nginx 反代下 307 降级 http 被浏览器
+// 拦截），集合端点带斜杠 404、不带斜杠反而命中（或反之）。这里在唯一的
+// request() 入口做对称回退：仅对 404、仅重试一次、仅改写尾斜杠，其余语义
+// （方法/头/体/租户）完全不变；成功即返回，失败仍抛原 404 走既有错误路径。
+function toggleTrailingSlash(input: RequestInfo | URL): RequestInfo | URL | null {
+  const raw = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+  const m = raw.match(/^([^?#]*)([?#].*)?$/)
+  if (!m) return null
+  const [, pathPart, rest = ''] = m
+  const origin = pathPart.match(/^https?:\/\/[^/]+/)?.[0] ?? ''
+  const path = pathPart.slice(origin.length)
+  if (!path.startsWith('/api/') || path === '/api/') return null
+  const toggled = path.endsWith('/') ? path.slice(0, -1) : `${path}/`
+  const fixed = `${origin}${toggled}${rest}`
+  if (typeof input === 'string') return fixed
+  if (input instanceof URL) return new URL(fixed, typeof window !== 'undefined' ? window.location.href : undefined)
+  return new Request(fixed, input)
+}
+
 async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const requestId = newChainRequestId()
-  const finalInit = requestInit(init, requestId)
+  const finalInit = requestInit(init, newChainRequestId())
+  const sentHeaders = new Headers(finalInit.headers)
+  const requestId = sentHeaders.get('X-Request-ID') ?? ''
   if (!finalInit.signal && typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
     finalInit.signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   }
@@ -179,9 +204,26 @@ async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Re
     ? finalInput
     : (finalInput instanceof URL ? finalInput.toString() : finalInput.url)
   // 每条请求一行链路日志：request id、方法、URL 与本次携带的租户头。
-  chainLog(`req=${requestId} ${method} ${url} org=${activeOrgId} project=${activeProjectId}`)
+  chainLog(`req=${requestId} ${method} ${url} org=${sentHeaders.get('X-Organization-Id')} project=${sentHeaders.get('X-Project-Id')}`)
   try {
-    return await fetch(finalInput, finalInit)
+    const res = await fetch(finalInput, finalInit)
+    // 仅对无请求体的安全方法回退（GET/HEAD/OPTIONS）：POST 等的 body 可能是
+    // 已被消耗的流，重发会抛错；且写操作 404 通常是资源不存在而非路由写法。
+    if (res.status === 404 && ['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) {
+      const alt = toggleTrailingSlash(finalInput)
+      if (alt) {
+        const altUrl = typeof alt === 'string' ? alt : (alt instanceof URL ? alt.toString() : alt.url)
+        chainLog(`req=${requestId} 404 slash-fallback retry ${method} ${altUrl}`)
+        // 重试沿用同一超时预算语义：新建一个独立 timeout，避免共享已耗尽的 signal。
+        const retryInit: RequestInit = { ...finalInit }
+        if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+          retryInit.signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        }
+        const retry = await fetch(alt, retryInit)
+        if (retry.status !== 404) return retry
+      }
+    }
+    return res
   } catch (err) {
     if (err instanceof DOMException && err.name === 'TimeoutError') {
       throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${redactUrl(url)}`)
@@ -656,11 +698,14 @@ function toCamera(r: CameraRecord): Camera {
 export async function listCameras(status?: string, organization?: string): Promise<Camera[]> {
   const q = new URLSearchParams()
   if (status) q.set('status', status)
-  // Legacy callers may still pass an organization filter; the backend scopes
-  // to the active X-Organization-Id and ignores cross-organization values.
+  // 显式组织（跨组织选摄像机，如 Add AI Model / AI model Filter）：查询参数与
+  // X-Organization-Id 头必须指向同一组织，否则后端中间件判为冲突返回 400。
   if (organization) q.set('org_id', organization)
   const qs = q.toString()
-  const res = await request(`${BASE_URL}/api/cameras${qs ? `?${qs}` : ''}`)
+  const res = await request(
+    `${BASE_URL}/api/cameras${qs ? `?${qs}` : ''}`,
+    organization ? { headers: { 'X-Organization-Id': organization } } : undefined,
+  )
   const data = await handle<CameraRecord[]>(res)
   return data.map(toCamera)
 }
@@ -673,11 +718,15 @@ export async function createCamera(
   rotate?: string,
   org_admin?: string,
   project_id?: string,
+  orgId?: string,
 ): Promise<Camera> {
-  console.log(`[api] createCamera name=${name} status=${status} rtmp=${redactUrl(rtmp)}`)
+  console.log(`[api] createCamera name=${name} status=${status} org=${orgId ?? activeOrgId} rtmp=${redactUrl(rtmp)}`)
+  // 后端按 X-Organization-Id 决定新摄像机归属；Add camera 选择的目标组织经头传入。
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (orgId) headers['X-Organization-Id'] = orgId
   const res = await request(`${BASE_URL}/api/cameras`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
       body: JSON.stringify({ name, rtmp, status, resolution, rotate, org_admin, project_id }),
   })
   return toCamera(await handle<CameraRecord>(res))

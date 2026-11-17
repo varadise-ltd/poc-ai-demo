@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { backendLabel, getBackendMode, getDefaultOrgName, getDefaultProjectName, getInferenceDevice, getOrganization, getProject, syncTenantContext, type BackendMode } from '../api'
-import { store } from '../store'
+import { setActiveOrgId, store } from '../store'
 
 const backendMode = ref<BackendMode>(getBackendMode())
 const backendStatus = ref(backendLabel())
@@ -34,6 +34,12 @@ async function loadTenantContext(): Promise<void> {
   const defaultProjectName = getDefaultProjectName()
   try {
     const synced = await syncTenantContext(store.activeOrgId, store.projectId)
+    // 后端把组织名选择器（如回退值 'Varadise'）规范化为 UUID 租户键；前端采纳
+    // 该规范键，保证下拉框 / 跨组织判断 / <img> 的 org_id 与后端同一个值。
+    const canonicalOrgId = synced.organization?.org_id?.trim()
+    if (canonicalOrgId && canonicalOrgId !== store.activeOrgId) {
+      void setActiveOrgId(canonicalOrgId)
+    }
     store.activeOrgName = displayName(synced.organization?.org_name, defaultOrgName)
     store.activeProjectName = displayName(synced.project?.project_name, defaultProjectName)
   } catch {

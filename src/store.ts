@@ -567,9 +567,11 @@ export async function addCameraRecord(
   rotate?: string,
   org_admin?: string,
   project_id?: string,
+  orgId?: string,
 ): Promise<void> {
-  const cam = await api.createCamera(name, rtmp, status, resolution, rotate, org_admin, project_id)
-  store.cameras.push(cam)
+  const cam = await api.createCamera(name, rtmp, status, resolution, rotate, org_admin, project_id, orgId)
+  // 目标组织 ≠ 当前活动组织时不插入本列表（本列表只显示活动组织的摄像机）。
+  if (!cam.orgId || cam.orgId === store.activeOrgId) store.cameras.push(cam)
   syncCameraMaps()
 }
 
@@ -723,7 +725,9 @@ export async function createScriptRecord(fields: {
     org_ids: fields.orgIds,
     camera: fields.camera,
   })
-  store.scripts.push(script)
+  // 只归属其他组织的新 model 不进入当前组织目录（否则是幽灵行）。
+  const orgIds = fields.orgIds ?? []
+  if (!orgIds.length || orgIds.includes(store.activeOrgId)) store.scripts.push(script)
   return script
 }
 

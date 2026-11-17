@@ -43,11 +43,17 @@ async function loadCamerasForSelectedOrgs(): Promise<void> {
       return
     }
     // 合并所有选中组织下的摄像机（camera 只属于一个 org）。
-    const results = await Promise.all(selectedOrgIds.value.map((orgId) => listCameras(undefined, orgId)))
+    // allSettled：单个组织查询失败（权限/网络）只丢该组织的摄像机，
+    // 不再让整个下拉变空。
+    const results = await Promise.allSettled(selectedOrgIds.value.map((orgId) => listCameras(undefined, orgId)))
     const seen = new Map<string, Camera>()
-    for (const batch of results) {
-      for (const cam of batch) seen.set(cam.id, cam)
-    }
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled') {
+        for (const cam of result.value) seen.set(cam.id, cam)
+      } else {
+        console.warn(`[AddAiModel] list cameras failed for org=${selectedOrgIds.value[i]}`, result.reason)
+      }
+    })
     cameras.value = [...seen.values()]
   } catch {
     cameras.value = []

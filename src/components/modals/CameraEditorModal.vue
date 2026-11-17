@@ -333,6 +333,7 @@ async function save(): Promise<void> {
         rotate.value,
         orgAdmin.value.trim(),
         selectedProject || undefined,
+        orgId.value.trim() || undefined,
       )
     } else if (store.cameraEditorId !== null) {
       await updateCameraRecord(store.cameraEditorId, {
