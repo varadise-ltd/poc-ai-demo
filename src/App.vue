@@ -5,11 +5,14 @@ import AICamLiveView from './components/AICamLiveView.vue'
 import ConfigurationView from './components/ConfigurationView.vue'
 import ChatbotWidget from './components/ChatbotWidget.vue'
 import DashboardView from './components/DashboardView.vue'
+import LoginView from './components/LoginView.vue'
+import { auth } from './auth'
 import { store } from './store'
 </script>
 
 <template>
-  <div class="app">
+  <LoginView v-if="auth.enabled && !auth.authenticated" />
+  <div v-else class="app">
     <TopBar />
     <TabNav />
     <main class="app-main">

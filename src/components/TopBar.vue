@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { backendLabel, getBackendMode, getDefaultOrgName, getDefaultProjectName, getInferenceDevice, getOrganization, getProject, syncTenantContext, type BackendMode } from '../api'
+import { backendLabel, ensureTenantContextSynced, getBackendMode, getDefaultOrgName, getDefaultProjectName, getInferenceDevice, getOrganization, getProject, type BackendMode } from '../api'
 import { setActiveOrgId, store } from '../store'
+import { auth, logout } from '../auth'
 
 const backendMode = ref<BackendMode>(getBackendMode())
 const backendStatus = ref(backendLabel())
@@ -33,7 +34,9 @@ async function loadTenantContext(): Promise<void> {
   const defaultOrgName = getDefaultOrgName()
   const defaultProjectName = getDefaultProjectName()
   try {
-    const synced = await syncTenantContext(store.activeOrgId, store.projectId)
+    // 与 main.ts 启动落库共用同一次 sync-context 请求（记忆化）；启动失败时
+    // 这里自动重试。后端已把 Cosmos orgId/projectId 持久化并解析权威名称。
+    const synced = await ensureTenantContextSynced(store.activeOrgId, store.projectId)
     // 后端把组织名选择器（如回退值 'Varadise'）规范化为 UUID 租户键；前端采纳
     // 该规范键，保证下拉框 / 跨组织判断 / <img> 的 org_id 与后端同一个值。
     const canonicalOrgId = synced.organization?.org_id?.trim()
@@ -108,6 +111,10 @@ onMounted(() => {
       <span class="status"><span class="dot"></span> All systems operational</span>
       <span class="language-chip">EN</span>
       <button class="top-btn" @click="toggleFullscreen">Fullscreen</button>
+      <span v-if="auth.enabled && auth.user" class="language-chip" :title="auth.user.email || auth.user.username">
+        {{ auth.user.name || auth.user.username }}
+      </span>
+      <button v-if="auth.enabled && auth.user" class="top-btn" @click="logout">Sign out</button>
       <button class="top-menu" aria-label="More options">⋮</button>
     </div>
   </header>

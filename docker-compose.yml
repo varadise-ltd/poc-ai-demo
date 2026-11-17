@@ -12,6 +12,14 @@ services:
       args:
         VITE_BACKEND_TARGET: "${POC_BACKEND_TARGET:-cloud}"
         VITE_LOCAL_API_BASE: "${POC_LOCAL_API_BASE:-https://internal-poc-aicctv-dev.varadise.cloud}"
+        # Cosmos SSO 登录页（独立部署）。POC_AUTH_ENABLED=true 时必须提供 POC_OIDC_ISSUER。
+        VITE_AUTH_ENABLED: "${POC_AUTH_ENABLED:-false}"
+        VITE_OIDC_ISSUER: "${POC_OIDC_ISSUER:-}"
+        VITE_OIDC_CLIENT_ID: "${POC_OIDC_CLIENT_ID:-poc-ai-demo}"
+        VITE_OIDC_REDIRECT_URI: "${POC_OIDC_REDIRECT_URI:-}"
+        VITE_OIDC_POST_LOGOUT_REDIRECT_URI: "${POC_OIDC_POST_LOGOUT_REDIRECT_URI:-}"
+        VITE_OIDC_ALLOWED_ROLES: "${POC_OIDC_ALLOWED_ROLES:-cosmos-member,cosmos-admin}"
+        VITE_OIDC_REQUIRE_ORG_CODE: "${POC_OIDC_REQUIRE_ORG_CODE:-true}"
     image: poc-ai-demo:standalone
     container_name: poc-ai-demo
     ports:

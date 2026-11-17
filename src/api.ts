@@ -1,5 +1,6 @@
 // Backend API client for face management (SQLite-backed).
 
+import { getAccessToken } from './auth'
 import type { Alert, Camera, CameraAI, CameraModelRun, DashboardQueryResult, FaceData, FaceMeta, FaceValidation, Script, ScriptParam, ScriptRun } from './types'
 
 // Backend routing is selected at frontend build time. Keep one simple switch:
@@ -38,28 +39,62 @@ const DEFAULT_PROJECT_ID = import.meta.env.VITE_DEFAULT_PROJECT_ID || 'default'
 const DEFAULT_ORG_NAME = import.meta.env.VITE_DEFAULT_ORG_NAME || 'Varadise'
 const DEFAULT_PROJECT_NAME = import.meta.env.VITE_DEFAULT_PROJECT_NAME || 'Default'
 
+/**
+ * 租户键合法性校验：Cosmos 母站 iframe 链接是 Go 模板，渲染失败时会把
+ * ``{{.projectId}}`` / ``{{.orgId}}`` 等占位符**字面量**原样传进来。这类值
+ * （以及 undefined/null/空串）绝不能当作租户键采用或写入 localStorage，
+ * 否则 <img> 串流会带着假 project_id 请求后端，camera_in_scope 项目匹配
+ * 失败 → 预览 404，且污染会跨刷新持续存在。
+ */
+function isValidTenantKey(value: string | null | undefined): value is string {
+  const v = (value || '').trim()
+  if (!v) return false
+  if (v.includes('{{') || v.includes('}}') || v.includes('{%')) return false // 未渲染模板占位符
+  if (v === 'undefined' || v === 'null') return false
+  return true
+}
+
 function urlContext(name: string): string | null {
   if (typeof window === 'undefined') return null
   const params = new URLSearchParams(window.location.search)
-  return params.get(name) || params.get(name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`))
+  const raw = params.get(name) || params.get(name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`))
+  const value = raw?.trim() || ''
+  if (!value) return null
+  if (!isValidTenantKey(value)) {
+    console.warn(`[cosmos-chain] ignored invalid tenant param ${name}=${raw} (unrendered template placeholder?)`)
+    return null
+  }
+  return value
+}
+
+/** localStorage 里可能残留历史污染值（如 '{{.projectId}}'）：读出时同样校验并清除。 */
+function storedTenantKey(storageKey: string): string | null {
+  const raw = window.localStorage.getItem(storageKey)?.trim() || ''
+  if (!raw) return null
+  if (!isValidTenantKey(raw)) {
+    console.warn(`[cosmos-chain] purged invalid cached tenant ${storageKey}=${raw}`)
+    window.localStorage.removeItem(storageKey)
+    return null
+  }
+  return raw
 }
 
 // Cosmos iframe 传入的 orgId / projectId 作为**页面初始化的租户键**（优先于
 // 旧缓存与默认值）。后端会在启动期把 profile-service 全量 org sync 到本地库，
 // 因此前端能把 UUID orgId 解析为 orgname 展示（如 React Ltd），preview /
 // Dashboard / Camera / AI model 页面都初始化为该 org。
-const URL_ORG_ID = (urlContext('orgId') || urlContext('porgId'))?.trim()
-const URL_PROJECT_ID = urlContext('projectId')?.trim()
+const URL_ORG_ID = urlContext('orgId') || urlContext('porgId')
+const URL_PROJECT_ID = urlContext('projectId')
 
 /** Active tenant used by all API calls. The backend remains the authority. */
 let activeOrgId = (() => {
   if (typeof window === 'undefined') return DEFAULT_ORG_ID
   // 优先级：iframe orgId > 用户手动选择（localStorage）> 默认 Varadise。
-  return URL_ORG_ID || window.localStorage.getItem(ORG_STORAGE_KEY)?.trim() || DEFAULT_ORG_ID
+  return URL_ORG_ID || storedTenantKey(ORG_STORAGE_KEY) || DEFAULT_ORG_ID
 })()
 let activeProjectId = (() => {
   if (typeof window === 'undefined') return DEFAULT_PROJECT_ID
-  return URL_PROJECT_ID || window.localStorage.getItem(PROJECT_STORAGE_KEY)?.trim() || DEFAULT_PROJECT_ID
+  return URL_PROJECT_ID || storedTenantKey(PROJECT_STORAGE_KEY) || DEFAULT_PROJECT_ID
 })()
 
 // 把 iframe 传入的租户持久化，保证刷新后仍保持该租户范围。
@@ -116,16 +151,46 @@ export function getDefaultOrgName(): string { return DEFAULT_ORG_NAME }
 /** 展示用默认项目名（projectname 解析失败时的兜底明文名）。 */
 export function getDefaultProjectName(): string { return DEFAULT_PROJECT_NAME }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Cosmos 组织锁定：从 Cosmos 跳转进来（活动 orgId 是合法 UUID）时，整个页面只能
+ * 使用这一个组织——所有组织下拉框只出现它对应的 orgname，不能切换到其他组织。
+ * 与后端 org_context.org_locked() 同一判定（非 UUID 的本地租户如 Varadise 不锁定）。
+ */
+export function isOrgLocked(): boolean {
+  return UUID_RE.test(activeOrgId)
+}
+
 export function setActiveOrgId(orgId: string): void {
-  activeOrgId = orgId.trim() || DEFAULT_ORG_ID
+  const next = orgId.trim() || DEFAULT_ORG_ID
+  // 锁定时忽略切换到其他组织（同一组织的规范化写回仍允许）。
+  if (isOrgLocked() && next !== activeOrgId) {
+    chainLog('org switch ignored (cosmos org locked)', { activeOrgId, requested: next })
+    return
+  }
+  activeOrgId = next
   if (typeof window !== 'undefined') window.localStorage.setItem(ORG_STORAGE_KEY, activeOrgId)
 }
 
 export function getActiveProjectId(): string { return activeProjectId }
 
 export function setActiveProjectId(projectId: string): void {
-  activeProjectId = projectId.trim() || DEFAULT_PROJECT_ID
+  const raw = (projectId || '').trim()
+  // 与 URL/localStorage 入口同一校验：未渲染模板占位符（'{{.projectId}}'）等
+  // 非法值绝不采用，回退默认项目并清除污染缓存，保证后续所有请求（含 <img>
+  // 串流）的 project_id 要么正确、要么缺省（default 通配）。
+  const next = isValidTenantKey(raw) ? raw : DEFAULT_PROJECT_ID
+  if (raw && next !== raw) {
+    chainLog('ignored invalid project id', { requested: raw, fallback: next })
+  }
+  activeProjectId = next
   if (typeof window !== 'undefined') window.localStorage.setItem(PROJECT_STORAGE_KEY, activeProjectId)
+}
+
+/** 租户键校验（与 URL/localStorage 入口同一规则）：供 store/UI 层复用。 */
+export function isValidTenantSelector(value: string | null | undefined): boolean {
+  return isValidTenantKey(value)
 }
 
 function requestInit(init: RequestInit = {}, requestId?: string): RequestInit {
@@ -135,6 +200,9 @@ function requestInit(init: RequestInit = {}, requestId?: string): RequestInit {
   // 的永远是当前组织（列错项目、或「头 ≠ org_id 查询参数」被中间件 400）。
   if (!headers.has('X-Organization-Id')) headers.set('X-Organization-Id', activeOrgId)
   if (!headers.has('X-Project-Id')) headers.set('X-Project-Id', activeProjectId)
+  // Cosmos SSO 已登录时附带 access token（后端目前仍以网络 ACL 为准，后续可据此验签授权）。
+  const accessToken = getAccessToken()
+  if (accessToken && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${accessToken}`)
   // 同理保留调用方的 X-Request-ID（runScriptCamera 等的 ui-run-… 关联 id）。
   if (requestId && !headers.has('X-Request-ID')) headers.set('X-Request-ID', requestId)
   return { ...init, headers }
@@ -253,7 +321,19 @@ export function apiBaseUrl(): string {
  */
 export function assetUrl(path: string | null | undefined): string {
   if (!path) return ''
-  return /^https?:\/\//i.test(path) ? path : `${BASE_URL}${path}`
+  if (/^https?:\/\//i.test(path)) return path
+  // <img> 无法带租户 header：后端相对资产 URL（快照等）若尚未携带租户
+  // 查询参数，补上当前活动 org/project，保证 Cosmos 租户下鉴权命中。
+  // 后端生成的 snapshot_url 已带 org_id/project_id，此时保持原样不覆盖。
+  if (path.startsWith('/api/') && !/[?&](org_id|orgId)=/.test(path)) {
+    const sep = path.includes('?') ? '&' : '?'
+    let scoped = `${path}${sep}org_id=${encodeURIComponent(activeOrgId)}`
+    if (isValidTenantKey(activeProjectId) && activeProjectId !== DEFAULT_PROJECT_ID && !/[?&](project_id|projectId)=/.test(path)) {
+      scoped += `&project_id=${encodeURIComponent(activeProjectId)}`
+    }
+    return `${BASE_URL}${scoped}`
+  }
+  return `${BASE_URL}${path}`
 }
 
 export interface OrganizationRecord {
@@ -347,11 +427,47 @@ export async function syncTenantContext(orgId = activeOrgId, projectId = activeP
   return handle(res)
 }
 
+// Cosmos 租户启动落库：iframe 传入的 orgId/projectId（入口已校验）必须在
+// 任何业务 API 之前先 POST /api/orgs/sync-context 持久化到后端
+// （organizations/projects 行 + profile-service 权威名称），后续所有接口
+// （列表 / Run / <img> 串流 / 快照 / Dashboard）都基于同一租户键。
+// 按 (org, project) 记忆化：main.ts 启动与 TopBar 名称解析共用同一次请求；
+// 失败不缓存，下一次调用（TopBar）自动重试。
+const tenantSyncCache = new Map<string, Promise<{ organization: OrganizationRecord; project: ProjectRecord }>>()
+
+export function ensureTenantContextSynced(
+  orgId = activeOrgId,
+  projectId = activeProjectId,
+): Promise<{ organization: OrganizationRecord; project: ProjectRecord }> {
+  const key = `${orgId}::${projectId}`
+  let pending = tenantSyncCache.get(key)
+  if (!pending) {
+    pending = syncTenantContext(orgId, projectId).catch((err) => {
+      tenantSyncCache.delete(key)
+      throw err
+    })
+    tenantSyncCache.set(key, pending)
+  }
+  return pending
+}
+
+/**
+ * 组织下拉框的唯一数据源。Cosmos 锁定时只返回传入 orgId 对应的这一个组织
+ * （后端同样只返回它；这里再按 activeOrgId 兜底过滤，保证每个下拉框唯一）。
+ */
 export async function listOrganizations(includeHidden = false): Promise<OrganizationRecord[]> {
   const query = includeHidden ? '?include_hidden=true' : ''
   const res = await request(`${BASE_URL}/api/orgs${query}`)
-  const data = await handle<{ organizations: OrganizationRecord[] }>(res)
-  return data.organizations ?? []
+  const data = await handle<{ organizations: OrganizationRecord[]; locked?: boolean }>(res)
+  const orgs = data.organizations ?? []
+  if (!isOrgLocked() && !data.locked) return orgs
+  const own = orgs.filter((org) => org.org_id === activeOrgId)
+  if (own.length) return own
+  try {
+    return [await getOrganization(activeOrgId)]
+  } catch {
+    return []
+  }
 }
 
 /** Toggle whether an organization shows in the org list (visible = show / hide). */
@@ -724,6 +840,9 @@ export async function createCamera(
   // 后端按 X-Organization-Id 决定新摄像机归属；Add camera 选择的目标组织经头传入。
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (orgId) headers['X-Organization-Id'] = orgId
+  // 跨组织新增：当前 X-Project-Id 属于原组织，不能带进目标组织（后端未选项目时
+  // 用请求头项目落库，会写出「B 组织摄像机挂 A 组织项目」）。改用所选项目或默认项目。
+  if (orgId && orgId !== activeOrgId) headers['X-Project-Id'] = project_id || DEFAULT_PROJECT_ID
   const res = await request(`${BASE_URL}/api/cameras`, {
     method: 'POST',
     headers,
@@ -1537,15 +1656,25 @@ export function streamUrl(
     annotate: String(annotate),
     roi_overlay: String(roiOverlay),
     org_id: activeOrgId,
-    // <img> cannot send X-Project-Id, so pass the tenant scope in the query.
-    project_id: activeProjectId,
   })
+  // Cosmos projectId 已在入口校验（占位符/undefined 绝不采用）并随启动
+  // ensureTenantContextSynced 落库；<img> 无法带 header，合法且非 default
+  // 时随 URL 传给后端。后端项目维度宽松（_require_media_camera）：与摄像机
+  // 归属不一致时屏蔽回退 default 通配，preview 仍可用；组织隔离由 org_id
+  // 严格保证。default 本身即通配范围，无需携带。
+  if (isValidTenantKey(activeProjectId) && activeProjectId !== DEFAULT_PROJECT_ID) {
+    q.set('project_id', activeProjectId)
+  }
   if (cacheBust !== undefined) q.set('stream_nonce', String(cacheBust))
   return `${BASE_URL}/api/stream?${q.toString()}`
 }
 
 export function snapshotUrl(camera: string, scriptId: string, annotate: boolean): string {
-  const q = new URLSearchParams({ camera, script_id: scriptId, annotate: String(annotate), org_id: activeOrgId, project_id: activeProjectId })
+  const q = new URLSearchParams({ camera, script_id: scriptId, annotate: String(annotate), org_id: activeOrgId })
+  // 与 streamUrl 同一策略：合法且非 default 的 projectId 随 URL 传入后端。
+  if (isValidTenantKey(activeProjectId) && activeProjectId !== DEFAULT_PROJECT_ID) {
+    q.set('project_id', activeProjectId)
+  }
   return `${BASE_URL}/api/stream/snapshot?${q.toString()}`
 }
 

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { listOrganizations, setOrgsVisible, type OrganizationRecord } from '../api'
+import { isOrgLocked, listOrganizations, setOrgsVisible, type OrganizationRecord } from '../api'
 import { store } from '../store'
 
 const allOrgs = ref<OrganizationRecord[]>([])
+// Cosmos 组织锁定：只展示传入 orgId 对应的组织，可见性配置（会影响其他组织）只读。
+const orgLocked = computed(() => isOrgLocked())
 const loading = ref(false)
 const saving = ref(false)
 const dropdownOpen = ref(false)
@@ -73,6 +75,7 @@ function toggleAll(): void {
 }
 
 async function apply(): Promise<void> {
+  if (orgLocked.value) return
   saving.value = true
   try {
     // 批量写后端 visible：选中的置展示，其余置隐藏。
@@ -129,7 +132,7 @@ watch(
           <button
             type="button"
             class="org-dropdown-trigger"
-            :disabled="loading || !allOrgs.length"
+            :disabled="loading || !allOrgs.length || orgLocked"
             @click="toggleDropdown"
           >
             <span class="org-dropdown-label">{{ loading ? 'Loading…' : selectedSummary }}</span>
@@ -155,7 +158,11 @@ watch(
             <span v-if="!allOrgs.length" class="subtitle">No organizations available</span>
           </div>
         </div>
-        <span class="subtitle">
+        <span v-if="orgLocked" class="subtitle">
+          Opened from Cosmos: this session is locked to the organization passed in, so only it is listed and
+          list visibility cannot be changed here.
+        </span>
+        <span v-else class="subtitle">
           Tick an organization to show it in lists; untick to hide it. Changes apply only after you confirm.
         </span>
       </div>
@@ -163,7 +170,7 @@ watch(
       <div class="org-actions">
         <button
           class="btn primary"
-          :disabled="saving || loading || !dirty"
+          :disabled="saving || loading || !dirty || orgLocked"
           @click="apply"
         >
           {{ saving ? 'Saving…' : 'Confirm' }}

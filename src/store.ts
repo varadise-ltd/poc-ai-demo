@@ -205,6 +205,8 @@ export async function loadScripts(): Promise<void> {
 }
 
 export async function setActiveOrgId(orgId: string): Promise<void> {
+  // Cosmos 组织锁定：只能使用传入的组织，切换到其他组织直接忽略（不清空、不重载）。
+  if (api.isOrgLocked() && (orgId || '').trim() && orgId.trim() !== api.getActiveOrgId()) return
   api.setActiveOrgId(orgId)
   store.activeOrgId = api.getActiveOrgId()
   store.selectedCamera = ''
@@ -217,7 +219,14 @@ export async function setActiveOrgId(orgId: string): Promise<void> {
 }
 
 export async function setActiveProjectId(projectId: string): Promise<void> {
-  api.setActiveProjectId(projectId)
+  // 非法租户键（未渲染的 '{{.projectId}}' 占位符 / undefined 字面量等）绝不采用：
+  // api 层会回退 'default'（后端通配项目），store 采纳回退后的规范值，保证
+  // 后续所有请求（列表 / Run / <img> 串流）都使用正确的 project_id。
+  const requested = (projectId || '').trim()
+  if (requested && !api.isValidTenantSelector(requested)) {
+    console.warn('[cosmos-chain] ignored invalid project id', { requested, fallback: 'default' })
+  }
+  api.setActiveProjectId(requested)
   store.projectId = api.getActiveProjectId()
   store.selectedCamera = ''
   store.selectedScriptId = ''
