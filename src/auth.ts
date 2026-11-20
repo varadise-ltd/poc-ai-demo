@@ -185,9 +185,13 @@ function openPopupLogin(): void {
   }
   auth.busy = true
   const onMessage = (event: MessageEvent) => {
-    if (event.origin !== window.location.origin) return
+    if (event.origin !== window.location.origin) {
+      console.warn('[auth] ignored cross-origin postMessage', { origin: event.origin, expected: window.location.origin })
+      return
+    }
     const data = event.data as { type?: string; ok?: boolean; error?: string } | null
     if (!data || data.type !== 'poc-auth-done') return
+    console.info('[auth] popup sign-in result received', { ok: !!data.ok, error: data.error || '' })
     window.removeEventListener('message', onMessage)
     auth.busy = false
     if (data.ok) {

@@ -431,8 +431,11 @@ async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Re
     : (finalInput instanceof URL ? finalInput.toString() : finalInput.url)
   // 每条请求一行链路日志：request id、方法、URL 与本次携带的租户头。
   chainLog(`req=${requestId} ${method} ${url} org=${sentHeaders.get('X-Organization-Id')} project=${sentHeaders.get('X-Project-Id')}`)
+  const startedAt = performance.now()
   try {
     const res = await fetch(finalInput, finalInit)
+    // 每条请求的响应状态与耗时（覆盖 JSON API、MJPEG 流、文件导出/下载等所有后端往返）。
+    chainLog(`res=${requestId} status=${res.status} ms=${Math.round(performance.now() - startedAt)} ${redactUrl(url)}`)
     // 401 = 会话过期 / 被吊销（BFF 或后端拒绝）：重新走 Cosmos 登录流程。
     if (res.status === 401) handleUnauthorized()
     // 仅对无请求体的安全方法回退（GET/HEAD/OPTIONS）：POST 等的 body 可能是
@@ -453,6 +456,7 @@ async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Re
     }
     return res
   } catch (err) {
+    chainLog(`req=${requestId} error=${err instanceof Error ? err.name : String(err)} ms=${Math.round(performance.now() - startedAt)} ${redactUrl(url)}`)
     if (err instanceof DOMException && err.name === 'TimeoutError') {
       throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${redactUrl(url)}`)
     }
@@ -1845,7 +1849,10 @@ export function streamUrl(
   }
   if (cosmosAnchor) q.set('cosmos_org_id', cosmosAnchor)
   if (cacheBust !== undefined) q.set('stream_nonce', String(cacheBust))
-  return `${BASE_URL}/api/stream?${q.toString()}`
+  const url = `${BASE_URL}/api/stream?${q.toString()}`
+  // MJPEG 实时流由 <img> 原生加载，无法走 request()：在此记录媒体流请求（外部接收）。
+  console.info(`[media] stream request camera=${camera} script=${scriptId} annotate=${annotate}`, redactUrl(url))
+  return url
 }
 
 export function snapshotUrl(camera: string, scriptId: string, annotate: boolean): string {
@@ -1855,7 +1862,9 @@ export function snapshotUrl(camera: string, scriptId: string, annotate: boolean)
     q.set('project_id', activeProjectId)
   }
   if (cosmosAnchor) q.set('cosmos_org_id', cosmosAnchor)
-  return `${BASE_URL}/api/stream/snapshot?${q.toString()}`
+  const url = `${BASE_URL}/api/stream/snapshot?${q.toString()}`
+  console.info(`[media] snapshot request camera=${camera} script=${scriptId}`, redactUrl(url))
+  return url
 }
 
 export interface StreamProbeResult {
