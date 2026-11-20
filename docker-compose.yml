@@ -2,6 +2,8 @@
 # Local/Cloud standalone 模式都通过 POC_*_API_BASE 提供浏览器可访问的后端地址；
 # BACKEND_HOST 只对使用 Dockerfile nginx 镜像的 Cloud 部署生效。
 # 不依赖后端 Compose 项目或共享 Docker 网络。
+# ★ 本文件不支持 Cosmos SSO（没有 /auth/* 反代，前端会按无登录模式运行；后端若要求登录，
+#   页面会提示「Sign-in is not available」）。Cosmos iframe / SSO 部署请用 docker-compose.cloud.yml。
 name: poc-ai-demo
 
 services:
@@ -12,14 +14,6 @@ services:
       args:
         VITE_BACKEND_TARGET: "${POC_BACKEND_TARGET:-cloud}"
         VITE_LOCAL_API_BASE: "${POC_LOCAL_API_BASE:-https://internal-poc-aicctv-dev.varadise.cloud}"
-        # Cosmos SSO 登录页（独立部署）。POC_AUTH_ENABLED=true 时必须提供 POC_OIDC_ISSUER。
-        VITE_AUTH_ENABLED: "${POC_AUTH_ENABLED:-false}"
-        VITE_OIDC_ISSUER: "${POC_OIDC_ISSUER:-}"
-        VITE_OIDC_CLIENT_ID: "${POC_OIDC_CLIENT_ID:-poc-ai-demo}"
-        VITE_OIDC_REDIRECT_URI: "${POC_OIDC_REDIRECT_URI:-}"
-        VITE_OIDC_POST_LOGOUT_REDIRECT_URI: "${POC_OIDC_POST_LOGOUT_REDIRECT_URI:-}"
-        VITE_OIDC_ALLOWED_ROLES: "${POC_OIDC_ALLOWED_ROLES:-cosmos-member,cosmos-admin}"
-        VITE_OIDC_REQUIRE_ORG_CODE: "${POC_OIDC_REQUIRE_ORG_CODE:-true}"
     image: poc-ai-demo:standalone
     container_name: poc-ai-demo
     ports:

@@ -107,23 +107,15 @@ th {
   letter-spacing: 0.2px;
 }
 
-.brand-mark {
-  width: 30px;
-  height: 30px;
-  border: 2px solid var(--orange);
-  border-radius: 8px;
-  position: relative;
+.brand-logo {
+  width: 96px;
+  height: 28px;
+  object-fit: contain;
+  display: block;
 }
 
-.brand-mark::after {
-  content: '';
-  width: 10px;
-  height: 10px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  position: absolute;
-  left: 7px;
-  top: 7px;
+.topbar .brand-logo {
+  filter: invert(1);
 }
 
 .brand small {

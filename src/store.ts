@@ -15,6 +15,10 @@ export const store = reactive({
   // Active tenant. The API client sends this as X-Organization-Id on every request.
   activeOrgId: api.getActiveOrgId(),
   projectId: api.getActiveProjectId(),
+  // 方案 v1.3 §4：后端答复本会话没有任何可用组织（standalone 未开通 Varadise）。
+  noOrgAvailable: false,
+  // 后端拒绝访问组织（GET /api/orgs → 403）的原因；null = 正常。
+  orgAccessError: null as api.OrgAccessError | null,
   // 展示用友好名称（profile-service 权威，后端落库后回读）；未解析时回退显示 id。
   activeOrgName: '',
   activeProjectName: '',
@@ -204,9 +208,18 @@ export async function loadScripts(): Promise<void> {
   }
 }
 
+/** 启动时同步后端的组织访问状态（方案 v1.3 §4）到 store。 */
+export function syncOrgAccessToStore(): void {
+  store.activeOrgId = api.getActiveOrgId()
+  store.noOrgAvailable = api.noOrgAvailable()
+  store.orgAccessError = api.getOrgAccessError()
+}
+
 export async function setActiveOrgId(orgId: string): Promise<void> {
-  // Cosmos 组织锁定：只能使用传入的组织，切换到其他组织直接忽略（不清空、不重载）。
-  if (api.isOrgLocked() && (orgId || '').trim() && orgId.trim() !== api.getActiveOrgId()) return
+  // 组织锁定：只能在本会话可用组织集合内切换（Cosmos 传入的组织 + 被授权时的
+  // Varadise）；集合之外的切换直接忽略（不清空、不重载）。
+  const requested = (orgId || '').trim()
+  if (requested && requested !== api.getActiveOrgId() && !api.canSelectOrg(requested)) return
   api.setActiveOrgId(orgId)
   store.activeOrgId = api.getActiveOrgId()
   store.selectedCamera = ''

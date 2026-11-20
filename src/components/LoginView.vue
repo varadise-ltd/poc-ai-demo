@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { auth, login, logout } from '../auth'
+import { computed, ref } from 'vue'
+import { auth, login, loginWithPassword, logout } from '../auth'
+
+const username = ref('')
+const password = ref('')
+const localError = ref('')
 
 const title = computed(() => {
   if (auth.status === 'denied') return 'Access denied'
@@ -8,13 +12,24 @@ const title = computed(() => {
   if (auth.status === 'error') return 'Sign-in failed'
   return 'Sign in'
 })
+
+async function submitPasswordLogin(): Promise<void> {
+  if (!username.value.trim() || !password.value) return
+  localError.value = ''
+  const ok = await loginWithPassword(username.value.trim(), password.value)
+  if (ok) {
+    window.location.reload()
+  } else {
+    localError.value = auth.message || 'Sign-in failed'
+  }
+}
 </script>
 
 <template>
   <div class="login-page">
     <section class="login-card panel" aria-labelledby="login-title">
       <div class="brand login-brand">
-        <span class="brand-mark"></span>
+        <img class="brand-logo" src="/cosmos-logo.svg" alt="Cosmos" />
         <div>
           COSMOS
           <small>AI CAM POC CENTER</small>
@@ -23,21 +38,51 @@ const title = computed(() => {
 
       <h1 id="login-title">{{ title }}</h1>
       <p class="subtitle">
-        Use your Cosmos account. You will be redirected to the Cosmos sign-in page;
-        this application never sees your password.
+        Sign in with your Cosmos account.
       </p>
 
-      <p v-if="auth.message" class="login-message" :class="auth.status" role="alert">{{ auth.message }}</p>
+      <form v-if="auth.passwordLogin && auth.status !== 'denied'" class="password-login" @submit.prevent="submitPasswordLogin">
+        <input
+          v-model="username"
+          type="text"
+          name="username"
+          autocomplete="username"
+          placeholder="Username / Email"
+          :disabled="auth.busy"
+        />
+        <input
+          v-model="password"
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          placeholder="Password"
+          :disabled="auth.busy"
+        />
+        <button type="submit" class="btn primary login-btn" :disabled="auth.busy">
+          {{ auth.busy ? 'Signing in…' : 'Sign in' }}
+        </button>
+      </form>
+
+      <p v-if="localError || auth.message" class="login-message" :class="auth.status" role="alert">
+        {{ localError || auth.message }}
+      </p>
+
+      <div v-if="auth.passwordLogin && auth.status !== 'denied'" class="login-divider"><span>or</span></div>
 
       <button
         v-if="auth.status !== 'denied'"
-        class="btn primary login-btn"
+        class="btn login-btn"
+        :class="auth.passwordLogin ? 'outline' : 'primary'"
         :disabled="auth.busy || !auth.ready"
         @click="login"
       >
-        {{ auth.busy || !auth.ready ? 'Redirecting…' : 'Sign in with Cosmos SSO' }}
+        Continue on the Cosmos sign-in page
       </button>
-      <button v-else class="btn primary login-btn" :disabled="auth.busy" @click="logout">
+      <p v-if="auth.inIframe" class="subtitle">
+        A Cosmos sign-in window will open. If nothing happens, allow pop-ups for this site or
+        <a href="/" target="_blank" rel="noopener">open POC in a new tab</a>.
+      </p>
+      <button v-else-if="auth.authenticated" class="btn outline login-btn" :disabled="auth.busy" @click="logout">
         Sign out and use another account
       </button>
     </section>
@@ -84,5 +129,39 @@ const title = computed(() => {
   width: 100%;
   padding: 12px;
   font-size: 15px;
+}
+.password-login {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.password-login input {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.password-login input:focus {
+  outline: none;
+  border-color: var(--orange);
+}
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted, #8b98a9);
+  font-size: 12px;
+}
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.btn.outline {
+  background: transparent;
+  color: var(--navy);
+  border: 1px solid var(--line);
 }
 </style>

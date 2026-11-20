@@ -1,6 +1,6 @@
 // Backend API client for face management (SQLite-backed).
 
-import { getAccessToken } from './auth'
+import { handleUnauthorized } from './auth'
 import type { Alert, Camera, CameraAI, CameraModelRun, DashboardQueryResult, FaceData, FaceMeta, FaceValidation, Script, ScriptParam, ScriptRun } from './types'
 
 // Backend routing is selected at frontend build time. Keep one simple switch:
@@ -31,12 +31,18 @@ export async function getInferenceDevice(): Promise<InferenceDeviceInfo> {
 
 const ORG_STORAGE_KEY = 'cosmos.activeOrgId'
 const PROJECT_STORAGE_KEY = 'cosmos.activeProjectId'
-// 无 iframe 且无本地缓存时的兜底租户键（本地自建 `Varadise`）。
-const DEFAULT_ORG_ID = import.meta.env.VITE_DEFAULT_ORG_ID || 'Varadise'
+// 本 tab 的 Cosmos 锚点（从 Cosmos 进入时 URL 带的 orgId）。方案 v1.3 §4.6：
+// 存 sessionStorage（每个 tab 独立，不跨 tab、不被 standalone 继承）。
+const ANCHOR_STORAGE_KEY = 'cosmos.entryOrgId'
+// 平台默认组织统一为 Varadise（方案 v1.3 决策 D2）。后端是唯一来源：真实键
+// （可能已收敛为 UUID）以 GET /api/orgs 返回的 default_org_id 为准，这里只是
+// 拿到后端答复之前的初始值（名称选择器，后端会规范化）。
+const PLATFORM_DEFAULT_ORG = 'Varadise'
+let DEFAULT_ORG_ID = PLATFORM_DEFAULT_ORG
 const DEFAULT_PROJECT_ID = import.meta.env.VITE_DEFAULT_PROJECT_ID || 'default'
 // 展示层的默认明文名称：无法从 profile-service 解析出 orgname/projectname 时，
 // 用这个默认名代替 orgid/projectid 展示，**绝不**在 UI 上直接显示 UUID。
-const DEFAULT_ORG_NAME = import.meta.env.VITE_DEFAULT_ORG_NAME || 'Varadise'
+const DEFAULT_ORG_NAME = PLATFORM_DEFAULT_ORG
 const DEFAULT_PROJECT_NAME = import.meta.env.VITE_DEFAULT_PROJECT_NAME || 'Default'
 
 /**
@@ -86,11 +92,57 @@ function storedTenantKey(storageKey: string): string | null {
 const URL_ORG_ID = urlContext('orgId') || urlContext('porgId')
 const URL_PROJECT_ID = urlContext('projectId')
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * 本 tab 的 Cosmos 锚点：URL 的 orgId 是合法 UUID 时采用并写入 sessionStorage；
+ * 否则沿用本 tab 之前记下的锚点（SPA 内跳转丢了 query 也不丢锚点）。
+ * 只用于告诉后端「这个 tab 从哪个 Cosmos 组织进入」——后端据此计算可用组织集合 A，
+ * 安全边界仍是后端的成员关系校验。
+ */
+let cosmosAnchor: string | null = (() => {
+  if (typeof window === 'undefined') return null
+  try {
+    if (URL_ORG_ID && UUID_RE.test(URL_ORG_ID)) {
+      window.sessionStorage.setItem(ANCHOR_STORAGE_KEY, URL_ORG_ID)
+      return URL_ORG_ID
+    }
+    const stored = window.sessionStorage.getItem(ANCHOR_STORAGE_KEY)?.trim() || ''
+    return UUID_RE.test(stored) ? stored : null
+  } catch {
+    return URL_ORG_ID && UUID_RE.test(URL_ORG_ID) ? URL_ORG_ID : null
+  }
+})()
+
+export function getCosmosAnchor(): string | null { return cosmosAnchor }
+
+/** 测试用：设置 / 清除锚点。 */
+export function _setCosmosAnchorForTest(anchor: string | null): void {
+  cosmosAnchor = anchor && UUID_RE.test(anchor) ? anchor : null
+}
+
+/** 后端答复的组织访问状态（方案 v1.3 §4）；null = 尚未获取 / 旧版后端。 */
+export interface OrgAccessState {
+  allowedOrgIds: string[]
+  defaultOrgId: string
+  cosmosOrgId: string | null
+}
+let orgAccess: OrgAccessState | null = null
+
+export function getOrgAccess(): OrgAccessState | null { return orgAccess }
+
+/** 测试用：重置后端答复的组织访问状态。 */
+export function _resetOrgAccessForTest(): void {
+  orgAccess = null
+  DEFAULT_ORG_ID = PLATFORM_DEFAULT_ORG
+}
+
 /** Active tenant used by all API calls. The backend remains the authority. */
 let activeOrgId = (() => {
   if (typeof window === 'undefined') return DEFAULT_ORG_ID
-  // 优先级：iframe orgId > 用户手动选择（localStorage）> 默认 Varadise。
-  return URL_ORG_ID || storedTenantKey(ORG_STORAGE_KEY) || DEFAULT_ORG_ID
+  // 优先级：Cosmos 锚点 > iframe orgId > 用户上次选择（localStorage）> 默认 Varadise。
+  // 拿到后端的可用组织集合后由 applyOrgAccess() 校正到集合内。
+  return cosmosAnchor || URL_ORG_ID || storedTenantKey(ORG_STORAGE_KEY) || DEFAULT_ORG_ID
 })()
 let activeProjectId = (() => {
   if (typeof window === 'undefined') return DEFAULT_PROJECT_ID
@@ -131,6 +183,7 @@ if (typeof window !== 'undefined') {
   chainLog('tenant init', {
     backendTarget,
     urlOrgId: URL_ORG_ID ?? null,
+    cosmosAnchor,
     urlProjectId: URL_PROJECT_ID ?? null,
     storedOrgId: window.localStorage.getItem(ORG_STORAGE_KEY) ?? null,
     storedProjectId: window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? null,
@@ -148,29 +201,132 @@ export function getActiveOrgId(): string {
 /** 展示用默认组织名（orgname 解析失败时的兜底明文名，非 UUID）。 */
 export function getDefaultOrgName(): string { return DEFAULT_ORG_NAME }
 
+/**
+ * 某组织在名称解析失败时的兜底展示名。组织锁定后 A 里同时可能有「Cosmos 锚点组织」和
+ * Varadise 两个组织：只有默认组织才能兜底成 'Varadise'，其他组织用中性名，
+ * 避免把锚点组织误显示成 Varadise（用户会以为自己在平台默认组织里操作）。
+ */
+export function isDefaultOrg(orgId: string): boolean {
+  const v = (orgId || '').trim()
+  return !!v && (v === PLATFORM_DEFAULT_ORG || v === (orgAccess?.defaultOrgId ?? DEFAULT_ORG_ID))
+}
+export const NON_DEFAULT_ORG_FALLBACK_NAME = 'Cosmos Org'
+export function orgFallbackName(orgId: string): string {
+  return isDefaultOrg(orgId) ? DEFAULT_ORG_NAME : NON_DEFAULT_ORG_FALLBACK_NAME
+}
+
 /** 展示用默认项目名（projectname 解析失败时的兜底明文名）。 */
 export function getDefaultProjectName(): string { return DEFAULT_PROJECT_NAME }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
 /**
- * Cosmos 组织锁定：从 Cosmos 跳转进来（活动 orgId 是合法 UUID）时，整个页面只能
- * 使用这一个组织——所有组织下拉框只出现它对应的 orgname，不能切换到其他组织。
- * 与后端 org_context.org_locked() 同一判定（非 UUID 的本地租户如 Varadise 不锁定）。
+ * 组织锁定（方案 v1.3 §4）：后端已答复可用组织集合 A 时恒为 true——所有组织下拉框
+ * 只出现 A 中的组织（Cosmos 传入的组织 + 被授权时的 Varadise），切换只能在 A 内。
+ * 旧版后端（没有 allowed_org_ids）沿用 11-17 版规则：活动 orgId 是 UUID 即锁定。
  */
 export function isOrgLocked(): boolean {
+  if (orgAccess) return true
   return UUID_RE.test(activeOrgId)
 }
 
+/** 把组织选择器规范化到后端的键（'Varadise' 名称 → default_org_id）。 */
+function canonicalOrgId(orgId: string): string {
+  const v = orgId.trim()
+  if (orgAccess && v === PLATFORM_DEFAULT_ORG) return orgAccess.defaultOrgId
+  return v
+}
+
+/** 该组织是否可以被选为活动组织（A 之内；旧版后端按 11-17 规则）。 */
+export function canSelectOrg(orgId: string): boolean {
+  const next = canonicalOrgId(orgId || '')
+  if (!next) return false
+  if (orgAccess) return orgAccess.allowedOrgIds.includes(next)
+  return !(UUID_RE.test(activeOrgId) && next !== activeOrgId)
+}
+
 export function setActiveOrgId(orgId: string): void {
-  const next = orgId.trim() || DEFAULT_ORG_ID
-  // 锁定时忽略切换到其他组织（同一组织的规范化写回仍允许）。
-  if (isOrgLocked() && next !== activeOrgId) {
-    chainLog('org switch ignored (cosmos org locked)', { activeOrgId, requested: next })
+  const next = canonicalOrgId(orgId) || DEFAULT_ORG_ID
+  if (next !== activeOrgId && !canSelectOrg(next)) {
+    chainLog('org switch ignored (not in allowed orgs)', {
+      activeOrgId, requested: next, allowed: orgAccess?.allowedOrgIds ?? null,
+    })
     return
   }
   activeOrgId = next
   if (typeof window !== 'undefined') window.localStorage.setItem(ORG_STORAGE_KEY, activeOrgId)
+}
+
+/**
+ * 采纳后端答复的组织访问状态，并把活动组织校正到 A 内：
+ * 当前值仍在 A 中则保留，否则取 A[0]（有锚点时是锚点，否则是 Varadise）；
+ * A 为空时活动组织置空（页面渲染「未开通」提示，不发业务请求）。
+ */
+export function applyOrgAccess(data: {
+  allowed_org_ids?: string[] | null
+  default_org_id?: string | null
+  cosmos_org_id?: string | null
+}, reconcile = true): OrgAccessState | null {
+  if (!Array.isArray(data.allowed_org_ids)) return orgAccess  // 旧版后端
+  const defaultOrgId = (data.default_org_id || PLATFORM_DEFAULT_ORG).trim()
+  orgAccess = {
+    allowedOrgIds: data.allowed_org_ids.map((o) => String(o).trim()).filter(Boolean),
+    defaultOrgId,
+    cosmosOrgId: data.cosmos_org_id ?? null,
+  }
+  DEFAULT_ORG_ID = defaultOrgId
+  if (!reconcile) return orgAccess
+  const current = canonicalOrgId(activeOrgId)
+  const next = orgAccess.allowedOrgIds.includes(current) ? current : (orgAccess.allowedOrgIds[0] ?? '')
+  if (next !== activeOrgId) chainLog('active org reconciled to allowed set', { from: activeOrgId, to: next })
+  activeOrgId = next
+  if (next && typeof window !== 'undefined') window.localStorage.setItem(ORG_STORAGE_KEY, next)
+  return orgAccess
+}
+
+/**
+ * 后端拒绝本会话访问组织（GET /api/orgs → 403）的原因：
+ * - not_member：当前账号不是 Cosmos 传入组织的成员；
+ * - membership_unavailable：暂时无法校验成员关系（profile-service 不可用）；
+ * - not_allowed：所选组织不在可用集合内。
+ */
+export type OrgAccessError = 'not_member' | 'membership_unavailable' | 'not_allowed' | 'forbidden'
+let orgAccessError: OrgAccessError | null = null
+
+export function getOrgAccessError(): OrgAccessError | null { return orgAccessError }
+
+/** 把后端 403 的 detail（如 ``NOT_MEMBER: …``）映射为前端原因码。 */
+export function orgAccessErrorFromDetail(detail: unknown): OrgAccessError {
+  const text = String(detail ?? '')
+  if (text.startsWith('NOT_MEMBER')) return 'not_member'
+  if (text.startsWith('MEMBERSHIP_UNAVAILABLE')) return 'membership_unavailable'
+  if (text.startsWith('ORG_NOT_ALLOWED')) return 'not_allowed'
+  return 'forbidden'
+}
+
+/** 启动时调用：GET /api/orgs 取可用组织集合并校正活动组织。失败（旧版后端 / 网络）返回 null。 */
+export async function initOrgAccess(): Promise<OrgAccessState | null> {
+  orgAccessError = null
+  try {
+    const res = await request(`${BASE_URL}/api/orgs`)
+    if (res.status === 403) {
+      const body = (await res.json().catch(() => ({}))) as { detail?: unknown }
+      orgAccessError = orgAccessErrorFromDetail(body.detail)
+      chainLog('org access denied by backend', { activeOrgId, reason: orgAccessError, detail: body.detail })
+      return orgAccess
+    }
+    if (!res.ok) return orgAccess
+    return applyOrgAccess(await res.json())
+  } catch (err) {
+    console.warn('[cosmos-chain] org access init failed', err)
+    return orgAccess
+  }
+}
+
+/** 测试用：重置组织访问错误。 */
+export function _resetOrgAccessErrorForTest(): void { orgAccessError = null }
+
+/** 后端已答复且本会话没有任何可用组织（standalone 未开通 Varadise）。 */
+export function noOrgAvailable(): boolean {
+  return !!orgAccess && orgAccess.allowedOrgIds.length === 0
 }
 
 export function getActiveProjectId(): string { return activeProjectId }
@@ -198,11 +354,13 @@ function requestInit(init: RequestInit = {}, requestId?: string): RequestInit {
   // 调用方显式传入的租户头（listProjects / saveProject / 跨组织 listCameras /
   // createCamera 的目标组织）必须保留，不能被 active 租户覆盖；否则后端看到
   // 的永远是当前组织（列错项目、或「头 ≠ org_id 查询参数」被中间件 400）。
-  if (!headers.has('X-Organization-Id')) headers.set('X-Organization-Id', activeOrgId)
+  if (!headers.has('X-Organization-Id') && activeOrgId) headers.set('X-Organization-Id', activeOrgId)
+  // 本 tab 的 Cosmos 锚点：后端据此计算可用组织集合 A（方案 v1.3 §4）。
+  if (cosmosAnchor && !headers.has('X-Cosmos-Org-Id')) headers.set('X-Cosmos-Org-Id', cosmosAnchor)
   if (!headers.has('X-Project-Id')) headers.set('X-Project-Id', activeProjectId)
-  // Cosmos SSO 已登录时附带 access token（后端目前仍以网络 ACL 为准，后续可据此验签授权）。
-  const accessToken = getAccessToken()
-  if (accessToken && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${accessToken}`)
+  // Cosmos SSO（方案 v1.3 §5）：token 只在 BFF 服务端；浏览器靠同源 HttpOnly 会话 cookie，
+  // nginx auth_request 注入 Bearer。写请求必须带 CSRF 头（BFF 校验，跨站表单设不了自定义头）。
+  if (!headers.has('X-POC-CSRF')) headers.set('X-POC-CSRF', '1')
   // 同理保留调用方的 X-Request-ID（runScriptCamera 等的 ui-run-… 关联 id）。
   if (requestId && !headers.has('X-Request-ID')) headers.set('X-Request-ID', requestId)
   return { ...init, headers }
@@ -275,6 +433,8 @@ async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Re
   chainLog(`req=${requestId} ${method} ${url} org=${sentHeaders.get('X-Organization-Id')} project=${sentHeaders.get('X-Project-Id')}`)
   try {
     const res = await fetch(finalInput, finalInit)
+    // 401 = 会话过期 / 被吊销（BFF 或后端拒绝）：重新走 Cosmos 登录流程。
+    if (res.status === 401) handleUnauthorized()
     // 仅对无请求体的安全方法回退（GET/HEAD/OPTIONS）：POST 等的 body 可能是
     // 已被消耗的流，重发会抛错；且写操作 404 通常是资源不存在而非路由写法。
     if (res.status === 404 && ['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) {
@@ -331,9 +491,16 @@ export function assetUrl(path: string | null | undefined): string {
     if (isValidTenantKey(activeProjectId) && activeProjectId !== DEFAULT_PROJECT_ID && !/[?&](project_id|projectId)=/.test(path)) {
       scoped += `&project_id=${encodeURIComponent(activeProjectId)}`
     }
-    return `${BASE_URL}${scoped}`
+    return `${BASE_URL}${withAnchor(scoped)}`
   }
-  return `${BASE_URL}${path}`
+  return `${BASE_URL}${path.startsWith('/api/') ? withAnchor(path) : path}`
+}
+
+/** <img>/<video> 无法带请求头：把本 tab 的 Cosmos 锚点放进查询参数（方案 v1.3 §4.5）。 */
+function withAnchor(url: string): string {
+  if (!cosmosAnchor || /[?&]cosmos_org_id=/.test(url)) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}cosmos_org_id=${encodeURIComponent(cosmosAnchor)}`
 }
 
 export interface OrganizationRecord {
@@ -452,14 +619,25 @@ export function ensureTenantContextSynced(
 }
 
 /**
- * 组织下拉框的唯一数据源。Cosmos 锁定时只返回传入 orgId 对应的这一个组织
- * （后端同样只返回它；这里再按 activeOrgId 兜底过滤，保证每个下拉框唯一）。
+ * 组织下拉框的唯一数据源（方案 v1.3 §4.6）：只返回本会话可用集合 A 中的组织
+ * （Cosmos 传入的组织 + 被授权时的 Varadise）；后端已按 A 过滤，这里再兜底过滤一次。
+ * 旧版后端：Cosmos 锁定时只返回传入 orgId 对应的这一个组织。
  */
 export async function listOrganizations(includeHidden = false): Promise<OrganizationRecord[]> {
   const query = includeHidden ? '?include_hidden=true' : ''
   const res = await request(`${BASE_URL}/api/orgs${query}`)
-  const data = await handle<{ organizations: OrganizationRecord[]; locked?: boolean }>(res)
+  const data = await handle<{
+    organizations: OrganizationRecord[]
+    locked?: boolean
+    allowed_org_ids?: string[]
+    default_org_id?: string
+    cosmos_org_id?: string | null
+  }>(res)
   const orgs = data.organizations ?? []
+  const access = applyOrgAccess(data, false)
+  if (access && Array.isArray(data.allowed_org_ids)) {
+    return orgs.filter((org) => access.allowedOrgIds.includes(org.org_id))
+  }
   if (!isOrgLocked() && !data.locked) return orgs
   const own = orgs.filter((org) => org.org_id === activeOrgId)
   if (own.length) return own
@@ -619,11 +797,11 @@ interface FaceMutationResult extends FaceRecord {
 }
 
 export function faceImageUrl(id: number): string {
-  return `${BASE_URL}/api/faces/${id}/image?org_id=${encodeURIComponent(activeOrgId)}`
+  return `${BASE_URL}${withAnchor(`/api/faces/${id}/image?org_id=${encodeURIComponent(activeOrgId)}`)}`
 }
 
 export function faceEmbeddingImageUrl(faceId: number, embeddingId: number): string {
-  return `${BASE_URL}/api/faces/${faceId}/embeddings/${embeddingId}/image?org_id=${encodeURIComponent(activeOrgId)}`
+  return `${BASE_URL}${withAnchor(`/api/faces/${faceId}/embeddings/${embeddingId}/image?org_id=${encodeURIComponent(activeOrgId)}`)}`
 }
 
 function toFaceData(r: FaceRecord): FaceData {
@@ -1665,6 +1843,7 @@ export function streamUrl(
   if (isValidTenantKey(activeProjectId) && activeProjectId !== DEFAULT_PROJECT_ID) {
     q.set('project_id', activeProjectId)
   }
+  if (cosmosAnchor) q.set('cosmos_org_id', cosmosAnchor)
   if (cacheBust !== undefined) q.set('stream_nonce', String(cacheBust))
   return `${BASE_URL}/api/stream?${q.toString()}`
 }
@@ -1675,6 +1854,7 @@ export function snapshotUrl(camera: string, scriptId: string, annotate: boolean)
   if (isValidTenantKey(activeProjectId) && activeProjectId !== DEFAULT_PROJECT_ID) {
     q.set('project_id', activeProjectId)
   }
+  if (cosmosAnchor) q.set('cosmos_org_id', cosmosAnchor)
   return `${BASE_URL}/api/stream/snapshot?${q.toString()}`
 }
 

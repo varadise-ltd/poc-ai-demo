@@ -7,13 +7,16 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
-    // 本地开发：把 cloud 模式的同源 /api 反向代理到本机后端，
-    // 与 Docker/nginx 的行为一致；local 模式则由 VITE_LOCAL_API_BASE 直连。
-    // 否则（无代理）Vite 会把 /api/* 当 SPA 回传 index.html，前端只能停在 seed 数据。
+    // 本地开发：把同源 /api 与 /auth 统一反向代理到本机后端 poc-ai-service（8000），
+    // 与线上 nginx 反代完全一致，仅需启动前后端 2 个进程（5173 + 8000）。
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+      },
+      '/auth': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: false,
       },
     },
   },

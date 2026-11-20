@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { backendLabel, ensureTenantContextSynced, getBackendMode, getDefaultOrgName, getDefaultProjectName, getInferenceDevice, getOrganization, getProject, type BackendMode } from '../api'
+import { backendLabel, ensureTenantContextSynced, getBackendMode, getDefaultProjectName, orgFallbackName, getInferenceDevice, getOrganization, getProject, type BackendMode } from '../api'
 import { setActiveOrgId, store } from '../store'
 import { auth, logout } from '../auth'
 
@@ -31,7 +31,8 @@ function displayName(name: string | undefined | null, fallback: string): string 
 async function loadTenantContext(): Promise<void> {
   // orgId/projectId（UUID）仅用于传输/记录；展示必须解析成明文 name。
   // 三层解析：profile-service（权威）→ 后端本地 records → 默认名（绝不 UUID）。
-  const defaultOrgName = getDefaultOrgName()
+  // 只有默认组织兜底成 'Varadise'；Cosmos 锚点组织解析不到名称时用中性名（见 api.orgFallbackName）。
+  let defaultOrgName = orgFallbackName(store.activeOrgId)
   const defaultProjectName = getDefaultProjectName()
   try {
     // 与 main.ts 启动落库共用同一次 sync-context 请求（记忆化）；启动失败时
@@ -42,6 +43,7 @@ async function loadTenantContext(): Promise<void> {
     const canonicalOrgId = synced.organization?.org_id?.trim()
     if (canonicalOrgId && canonicalOrgId !== store.activeOrgId) {
       void setActiveOrgId(canonicalOrgId)
+      defaultOrgName = orgFallbackName(canonicalOrgId)
     }
     store.activeOrgName = displayName(synced.organization?.org_name, defaultOrgName)
     store.activeProjectName = displayName(synced.project?.project_name, defaultProjectName)
@@ -95,7 +97,7 @@ onMounted(() => {
 <template>
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark"></span>
+      <img class="brand-logo" src="/cosmos-logo.svg" alt="Cosmos" />
       <div>
         COSMOS
         <small>AI CAM POC CENTER</small>
@@ -114,7 +116,8 @@ onMounted(() => {
       <span v-if="auth.enabled && auth.user" class="language-chip" :title="auth.user.email || auth.user.username">
         {{ auth.user.name || auth.user.username }}
       </span>
-      <button v-if="auth.enabled && auth.user" class="top-btn" @click="logout">Sign out</button>
+      <!-- iframe 内由 Cosmos 母站负责登出（方案 §5.6）：不显示登出按钮，避免把母站一起登出。 -->
+      <button v-if="auth.enabled && auth.user && !auth.inIframe" class="top-btn" @click="logout">Sign out</button>
       <button class="top-menu" aria-label="More options">⋮</button>
     </div>
   </header>

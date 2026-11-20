@@ -20,21 +20,8 @@ ARG VITE_BACKEND_TARGET=cloud
 ARG VITE_LOCAL_API_BASE=""
 ENV VITE_BACKEND_TARGET=${VITE_BACKEND_TARGET} \
     VITE_LOCAL_API_BASE=${VITE_LOCAL_API_BASE}
-# Cosmos SSO 登录页：默认关闭（iframe 嵌入 Cosmos 时不需要）；独立部署见 docs/cosmos-sso-login.md。
-ARG VITE_AUTH_ENABLED=false
-ARG VITE_OIDC_ISSUER=""
-ARG VITE_OIDC_CLIENT_ID=poc-ai-demo
-ARG VITE_OIDC_REDIRECT_URI=""
-ARG VITE_OIDC_POST_LOGOUT_REDIRECT_URI=""
-ARG VITE_OIDC_ALLOWED_ROLES=cosmos-member,cosmos-admin
-ARG VITE_OIDC_REQUIRE_ORG_CODE=true
-ENV VITE_AUTH_ENABLED=$VITE_AUTH_ENABLED \
-    VITE_OIDC_ISSUER=$VITE_OIDC_ISSUER \
-    VITE_OIDC_CLIENT_ID=$VITE_OIDC_CLIENT_ID \
-    VITE_OIDC_REDIRECT_URI=$VITE_OIDC_REDIRECT_URI \
-    VITE_OIDC_POST_LOGOUT_REDIRECT_URI=$VITE_OIDC_POST_LOGOUT_REDIRECT_URI \
-    VITE_OIDC_ALLOWED_ROLES=$VITE_OIDC_ALLOWED_ROLES \
-    VITE_OIDC_REQUIRE_ORG_CODE=$VITE_OIDC_REQUIRE_ORG_CODE
+# Cosmos SSO 已内置在后端 poc-ai-service（/auth/*），无需构建期配置，也无需独立 BFF 边车；
+# 前端运行时通过同源 GET /auth/me 判断后端是否已启用 SSO。
 
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -82,7 +69,11 @@ ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
 
 # 只允许替换这几个变量；否则 envsubst 会误处理 nginx 自带的变量
 # （$host、$scheme、$proxy_add_x_forwarded_for 等），生成的配置会失效。
-ENV NGINX_ENVSUBST_FILTER='^(BACKEND_HOST|NGINX_LOCAL_RESOLVERS)$'
+ENV NGINX_ENVSUBST_FILTER='^(BACKEND_HOST|NGINX_LOCAL_RESOLVERS|COSMOS_PARENT_ORIGIN)$'
+
+# 允许嵌入本前端的 Cosmos 母站 origin（空格分隔多个）。默认同时允许 PROD 与 DEV 母站，
+# 未注入时 DEV（cosmos-dev）的 iframe 也不会被浏览器拒绝；生产部署建议显式只写 PROD 母站。
+ENV COSMOS_PARENT_ORIGIN="https://cosmos.varadise.cloud https://cosmos-dev.varadise.cloud"
 
 # 入口脚本：在 envsubst 渲染模板前归一化 BACKEND_HOST。
 # 文件必须放在 /docker-entrypoint.d/ 且以 .envsh 结尾（入口脚本用 source 加载，
