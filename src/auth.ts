@@ -88,16 +88,22 @@ async function fetchMe(): Promise<'ok' | 'unauthenticated' | 'disabled'> {
   let res: Response
   try {
     res = await fetch('/auth/me', { credentials: 'same-origin', cache: 'no-store' })
-  } catch {
+  } catch (e) {
+    console.warn('[auth] GET /auth/me failed (BFF unreachable / not reverse-proxied)', e)
     return 'disabled'
   }
+  console.info('[auth] GET /auth/me -> status=%d content-type=%s', res.status, res.headers.get('content-type') || '')
   if (res.status === 401) {
     const body = (await res.json().catch(() => ({}))) as { password_login?: boolean }
     auth.passwordLogin = body.password_login === true
+    console.info('[auth] /auth/me -> 401 unauthenticated (password_login=%s)', auth.passwordLogin)
     return 'unauthenticated'
   }
   const type = res.headers.get('content-type') || ''
-  if (!res.ok || !type.includes('application/json')) return 'disabled' // 404 / SPA fallback = 未部署 BFF
+  if (!res.ok || !type.includes('application/json')) {
+    console.warn('[auth] /auth/me -> disabled (404 or non-JSON: SSO/BFF not deployed)', { status: res.status, type })
+    return 'disabled' // 404 / SPA fallback = 未部署 BFF
+  }
   const body = (await res.json()) as { sub?: string; name?: string; email?: string; roles?: string[] }
   auth.user = {
     sub: String(body.sub || ''),
@@ -106,6 +112,7 @@ async function fetchMe(): Promise<'ok' | 'unauthenticated' | 'disabled'> {
     email: String(body.email || ''),
     roles: Array.isArray(body.roles) ? body.roles.map(String) : [],
   }
+  console.info('[auth] /auth/me -> ok sub=%s', String(body.sub || ''))
   return 'ok'
 }
 
@@ -117,11 +124,13 @@ async function fetchMe(): Promise<'ok' | 'unauthenticated' | 'disabled'> {
  */
 export async function initAuth(): Promise<void> {
   auth.inIframe = inIframe()
+  console.info('[auth] initAuth start inIframe=%s href=%s', auth.inIframe, window.location.href)
   try {
     const state = await fetchMe()
     if (state === 'disabled') {
       auth.enabled = false
       auth.authenticated = true
+      console.info('[auth] initAuth -> SSO disabled, running without login')
       return
     }
     auth.enabled = true
@@ -130,6 +139,7 @@ export async function initAuth(): Promise<void> {
       auth.status = 'signed-out'
       auth.message = ''
       try { window.sessionStorage.removeItem(SILENT_KEY) } catch { /* ignore */ }
+      console.info('[auth] initAuth -> already authenticated')
       return
     }
     auth.authenticated = false
@@ -139,6 +149,7 @@ export async function initAuth(): Promise<void> {
       auth.status = e.status
       auth.message = e.message
       window.history.replaceState(null, '', currentPath())
+      console.warn('[auth] initAuth -> sso_error in URL: %s', ssoError)
       return // 显示登录页（iframe 的静默登录已失败 / 登录被拒）
     }
     startLogin(false)
@@ -159,20 +170,29 @@ export function startLogin(userInitiated: boolean): void {
   const returnTo = encodeURIComponent(currentPath())
   if (!auth.inIframe) {
     if (!userInitiated) {
-      if (silentAttempts().length >= SILENT_MAX) return // 停在登录页，由用户点击
+      if (silentAttempts().length >= SILENT_MAX) {
+        console.warn('[auth] startLogin standalone: silent retry limit reached, staying on login view')
+        return // 停在登录页，由用户点击
+      }
       recordSilentAttempt()
     }
     auth.busy = true
+    console.info('[auth] startLogin standalone -> redirect /auth/login?return_to=%s', returnTo)
     window.location.assign(`/auth/login?return_to=${returnTo}`)
     return
   }
   if (!userInitiated) {
-    if (silentAttempts().length >= SILENT_MAX) return // 显示按钮
+    if (silentAttempts().length >= SILENT_MAX) {
+      console.warn('[auth] startLogin iframe: silent retry limit reached, showing Sign-in button')
+      return // 显示按钮
+    }
     recordSilentAttempt()
     auth.busy = true
+    console.info('[auth] startLogin iframe -> silent prompt=none /auth/login')
     window.location.assign(`/auth/login?prompt=none&return_to=${returnTo}`)
     return
   }
+  console.info('[auth] startLogin iframe -> popup login')
   openPopupLogin()
 }
 
