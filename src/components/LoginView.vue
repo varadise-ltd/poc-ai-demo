@@ -15,7 +15,7 @@ const title = computed(() => {
 
 const failureGuidance = computed(() => {
   if (auth.status === 'denied') {
-    return 'This account does not have access to this POC. Ask your Cosmos administrator to assign the cosmos-member or cosmos-admin role, then return to Cosmos and sign in with an authorized account.'
+    return 'This account does not have access to this POC. Ask your Cosmos administrator to assign the Cosmos User or cosmos-admin role, then return to Cosmos and sign in with an authorized account.'
   }
   if (auth.status === 'error' || auth.status === 'expired') {
     return 'Your sign-in could not be completed. Return to the Cosmos sign-in page to try again. If the problem continues, contact your Cosmos administrator.'

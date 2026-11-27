@@ -78,7 +78,7 @@ function recordSilentAttempt(): void {
 
 function errorMessage(code: string): { status: typeof auth.status; message: string } {
   if (code === 'access_denied') {
-    return { status: 'denied', message: 'Access denied: a valid Cosmos account (cosmos-member or cosmos-admin) is required.' }
+    return { status: 'denied', message: 'Access denied: a valid Cosmos account (Cosmos User or cosmos-admin) is required.' }
   }
   if (code === 'login_required') return { status: 'signed-out', message: '' }
   return { status: 'error', message: 'Cosmos sign-in failed. Please try again.' }
@@ -258,7 +258,7 @@ export async function loginWithPassword(username: string, password: string): Pro
       auth.message = 'Invalid username or password.'
     } else if (code === 'access_denied') {
       auth.status = 'denied'
-      auth.message = 'Access denied: a valid Cosmos account (cosmos-member or cosmos-admin) is required.'
+      auth.message = 'Access denied: a valid Cosmos account (Cosmos User or cosmos-admin) is required.'
     } else {
       auth.status = 'error'
       auth.message = 'Cosmos sign-in failed. Please try again.'
