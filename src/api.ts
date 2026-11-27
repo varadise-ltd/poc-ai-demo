@@ -595,7 +595,15 @@ export async function syncTenantContext(orgId = activeOrgId, projectId = activeP
       project_id: projectId,
     }),
   })
-  return handle(res)
+  const data = await handle<{ organization: OrganizationRecord; project: ProjectRecord }>(res)
+  // 登录 / 启动链路佐证：后端把 org/project UUID 解析成权威名称后的最终结果。
+  chainLog('tenant context synced', {
+    orgId: data.organization?.org_id,
+    orgName: data.organization?.org_name,
+    projectId: data.project?.project_id,
+    projectName: data.project?.project_name,
+  })
+  return data
 }
 
 // Cosmos 租户启动落库：iframe 传入的 orgId/projectId（入口已校验）必须在
