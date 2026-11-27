@@ -10,6 +10,7 @@
 #   POC_BACKEND_HOST      后端主机名（只写主机名，不带 scheme/端口；K8s 用 FQDN）
 #   COSMOS_PARENT_ORIGIN  允许以 iframe 嵌入本页的 Cosmos 母站（空格分隔多个）
 #   POC_FRONTEND_PORT     对外端口（默认 8080）
+#   AUTH_FLOW / AUTH_BASE_URL / AUTH_REALM / AUTH_CLIENT_ID / BFF_BASE_URL  Cosmos 统一登录（见 .env.example）
 name: poc-ai-demo-cloud
 
 services:
@@ -24,6 +25,12 @@ services:
     environment:
       BACKEND_HOST: "${POC_BACKEND_HOST:-backend}"
       COSMOS_PARENT_ORIGIN: "${COSMOS_PARENT_ORIGIN:-https://cosmos-dev.varadise.cloud}"
+      # Cosmos 统一登录（cmp-webapp = 默认，前端 PKCE / iframe token bridge；legacy = 回滚到后端 /auth/login）
+      AUTH_FLOW: "${AUTH_FLOW:-cmp-webapp}"
+      AUTH_BASE_URL: "${AUTH_BASE_URL:-https://cosmos-dev.varadise.cloud/auth}"
+      AUTH_REALM: "${AUTH_REALM:-cmp-dev}"
+      AUTH_CLIENT_ID: "${AUTH_CLIENT_ID:-cmp-webapp}"
+      BFF_BASE_URL: "${BFF_BASE_URL:-}"
     ports:
       - "${POC_FRONTEND_PORT:-8080}:80"
     restart: unless-stopped

@@ -90,7 +90,11 @@ async function submitPasswordLogin(): Promise<void> {
       >
         Continue on the Cosmos sign-in page
       </button>
-      <p v-if="auth.inIframe" class="subtitle">
+      <p v-if="auth.inIframe && auth.flow === 'cmp-webapp' && auth.tokenExchange" class="subtitle">
+        POC uses your current Cosmos sign-in. If this keeps failing, reload Cosmos or
+        <a href="/" target="_blank" rel="noopener">open POC in a new tab</a>.
+      </p>
+      <p v-else-if="auth.inIframe" class="subtitle">
         A Cosmos sign-in window will open. If nothing happens, allow pop-ups for this site or
         <a href="/" target="_blank" rel="noopener">open POC in a new tab</a>.
       </p>

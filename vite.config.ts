@@ -18,6 +18,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: false,
       },
+      // /v1/me：Cosmos 统一方案的接口名（后端 /auth/me 的别名）
+      '/v1': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: false,
+      },
     },
   },
 })

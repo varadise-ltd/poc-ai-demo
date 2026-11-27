@@ -1,0 +1,9 @@
+<!doctype html>
+<html>
+  <body>
+    <script>
+      // keycloak-js check-sso：把 Keycloak 静默回调的 URL 交回父页面（同源）。
+      parent.postMessage(location.href, location.origin)
+    </script>
+  </body>
+</html>

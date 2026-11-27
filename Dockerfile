@@ -69,11 +69,24 @@ ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
 
 # 只允许替换这几个变量；否则 envsubst 会误处理 nginx 自带的变量
 # （$host、$scheme、$proxy_add_x_forwarded_for 等），生成的配置会失效。
-ENV NGINX_ENVSUBST_FILTER='^(BACKEND_HOST|NGINX_LOCAL_RESOLVERS|COSMOS_PARENT_ORIGIN)$'
+ENV NGINX_ENVSUBST_FILTER='^(BACKEND_HOST|NGINX_LOCAL_RESOLVERS|COSMOS_PARENT_ORIGIN|AUTH_FLOW|AUTH_BASE_URL|AUTH_REALM|AUTH_CLIENT_ID|BFF_BASE_URL)$'
 
 # 允许嵌入本前端的 Cosmos 母站 origin（空格分隔多个）。默认同时允许 PROD 与 DEV 母站，
 # 未注入时 DEV（cosmos-dev）的 iframe 也不会被浏览器拒绝；生产部署建议显式只写 PROD 母站。
 ENV COSMOS_PARENT_ORIGIN="https://cosmos.varadise.cloud https://cosmos-dev.varadise.cloud"
+
+# Cosmos 统一登录（运行期写入 /config.js，见 nginx.conf.template 与 src/config.ts）。
+#   AUTH_FLOW=cmp-webapp ：默认（新模式）。standalone 用 keycloak-js（PKCE）登录、iframe 由 Cosmos 母站
+#                          postMessage 下发 token，前端立即 POST /auth/session 换同源 HttpOnly 会话
+#                          （后端 COSMOS_SSO_EXCHANGE_AZP 默认即 cmp-webapp；后端未开启时前端自动回退 legacy）
+#   AUTH_FLOW=legacy     ：回滚开关 —— 后端 /auth/login（poc-ai-demo client）
+#   BFF_BASE_URL 留空 = 同源（推荐）；不要填 K8s Service FQDN（浏览器无法解析）。
+# 这些都是公开值（client_id / realm），不含任何 secret。
+ENV AUTH_FLOW=cmp-webapp \
+    AUTH_BASE_URL=https://cosmos-dev.varadise.cloud/auth \
+    AUTH_REALM=cmp-dev \
+    AUTH_CLIENT_ID=cmp-webapp \
+    BFF_BASE_URL=""
 
 # 入口脚本：在 envsubst 渲染模板前归一化 BACKEND_HOST。
 # 文件必须放在 /docker-entrypoint.d/ 且以 .envsh 结尾（入口脚本用 source 加载，
