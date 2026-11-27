@@ -13,6 +13,16 @@ const title = computed(() => {
   return 'Sign in'
 })
 
+const failureGuidance = computed(() => {
+  if (auth.status === 'denied') {
+    return 'This account does not have access to this POC. Ask your Cosmos administrator to assign the cosmos-member or cosmos-admin role, then return to Cosmos and sign in with an authorized account.'
+  }
+  if (auth.status === 'error' || auth.status === 'expired') {
+    return 'Your sign-in could not be completed. Return to the Cosmos sign-in page to try again. If the problem continues, contact your Cosmos administrator.'
+  }
+  return ''
+})
+
 async function submitPasswordLogin(): Promise<void> {
   if (!username.value.trim() || !password.value) return
   localError.value = ''
@@ -66,13 +76,15 @@ async function submitPasswordLogin(): Promise<void> {
       <p v-if="localError || auth.message" class="login-message" :class="auth.status" role="alert">
         {{ localError || auth.message }}
       </p>
+      <p v-if="failureGuidance" class="login-guidance">
+        {{ failureGuidance }}
+      </p>
 
       <div v-if="auth.passwordLogin && auth.status !== 'denied'" class="login-divider"><span>or</span></div>
 
       <button
-        v-if="auth.status !== 'denied'"
         class="btn login-btn"
-        :class="auth.passwordLogin ? 'outline' : 'primary'"
+        :class="auth.passwordLogin && auth.status !== 'denied' ? 'outline' : 'primary'"
         :disabled="auth.busy || !auth.ready"
         @click="login"
       >
@@ -124,6 +136,12 @@ async function submitPasswordLogin(): Promise<void> {
 .login-message.error {
   color: var(--red);
   border-color: var(--red);
+}
+.login-guidance {
+  margin: 0;
+  color: var(--muted, #596579);
+  font-size: 13px;
+  line-height: 1.55;
 }
 .login-btn {
   width: 100%;
