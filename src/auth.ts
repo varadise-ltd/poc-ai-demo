@@ -237,6 +237,7 @@ export function login(): void {
  */
 export async function loginWithPassword(username: string, password: string): Promise<boolean> {
   auth.busy = true
+  console.info('[auth] POST /auth/login-password entry username=%s', username)
   try {
     const res = await fetch('/auth/login-password', {
       method: 'POST',
@@ -245,6 +246,7 @@ export async function loginWithPassword(username: string, password: string): Pro
       body: JSON.stringify({ username, password }),
     })
     const body = (await res.json().catch(() => ({}))) as { detail?: string }
+    console.info('[auth] POST /auth/login-password -> status=%d ok=%s', res.status, res.ok)
     if (res.ok) {
       auth.authenticated = true
       auth.status = 'signed-out'
@@ -279,14 +281,16 @@ export async function loginWithPassword(username: string, password: string): Pro
  */
 export async function logout(): Promise<void> {
   auth.busy = true
+  const local = auth.inIframe ? '?local=1' : ''
+  console.info('[auth] POST /auth/logout entry local=%s', auth.inIframe)
   try {
-    const local = auth.inIframe ? '?local=1' : ''
     const res = await fetch(`/auth/logout${local}`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'X-POC-CSRF': '1' },
     })
     const body = res.ok ? ((await res.json()) as { redirect?: string | null }) : { redirect: null }
+    console.info('[auth] POST /auth/logout -> status=%d redirect=%s', res.status, !!body.redirect)
     auth.authenticated = false
     auth.user = null
     if (body.redirect) {
